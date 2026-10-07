@@ -1,0 +1,2005 @@
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/Dockerfile /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/Dockerfile
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/Dockerfile	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/Dockerfile	2026-10-06 17:15:08.436914900 +0200
+@@ -1,6 +1,6 @@
+ FROM orbit-sdk:0.43
+ USER root
+-RUN apt-get update && apt-get install -y --no-install-recommends curl python3 cmake pkg-config autoconf automake libtool perl libcurl4-openssl-dev libmicrohttpd-dev libssl-dev zstd && rm -rf /var/lib/apt/lists/*
++RUN apt-get update && apt-get install -y --no-install-recommends curl python3 cmake pkg-config autoconf automake libtool perl libcurl4-openssl-dev libmicrohttpd-dev libssl-dev zstd libstdc++-14-dev && rm -rf /var/lib/apt/lists/*
+ COPY tools/build-deps.sh /tmp/build-deps.sh
+ RUN apt-get update && apt-get install -y --no-install-recommends xz-utils && rm -rf /var/lib/apt/lists/*
+ RUN --mount=type=cache,target=/tmp/orbit-deps bash /tmp/build-deps.sh
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/Makefile /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/Makefile
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/Makefile	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/Makefile	2026-10-06 17:33:20.879254600 +0200
+@@ -1,11 +1,15 @@
+ .DEFAULT_GOAL := host
+ SOURCES := $(wildcard backend/*.c) .deps/cjson/cJSON.c
+ HEADERS := $(wildcard backend/*.h)
+-CPPFLAGS := -D_FILE_OFFSET_BITS=64 -Ibackend -Ilauncher -I.deps/cjson -Ibuild/generated
++CPPFLAGS := -D_FILE_OFFSET_BITS=64 -Ibackend -Ilauncher -I.deps/cjson -Ibuild/generated -Ithird_party
+ CFLAGS := -std=c11 -O2 -g -Wall -Wextra -Werror -Wno-misleading-indentation
+ HOST_CC ?= clang-19
++# UnRAR's C++ shim links as an object, so the driver never sees a C++ input and
++# cannot pick the standard library itself. macOS hosts: HOST_CXXLIBS=-lc++.
++HOST_CXXLIBS ?= -lstdc++
+ PS5_PAYLOAD_SDK ?= /opt/ps5-payload-sdk
+ PS5_CC := $(PS5_PAYLOAD_SDK)/bin/prospero-clang
++PS5_CXX := $(PS5_PAYLOAD_SDK)/bin/prospero-clang++
+ PS5_LIB := $(PS5_PAYLOAD_SDK)/target/user/homebrew
+ PS5_STRIP := $(PS5_PAYLOAD_SDK)/bin/prospero-strip
+ GENERATED := build/generated/assets.h build/generated/catalog.h build/generated/ca.h build/generated/network.h build/generated/launcher.h
+@@ -14,27 +18,59 @@
+ # The SDK opens DT_NEEDED libraries in order. AppInst uses Ipmi internally;
+ # retain and load Ipmi first even though Orbit does not call its API directly.
+ PS5_LAUNCHER_LIBS := -Wl,--push-state,--no-as-needed -lSceIpmi -Wl,--pop-state -lSceAppInstUtil
+-PAYLOAD_LIBS := -L$(PS5_LIB)/lib -lcurl -lmicrohttpd -lssl -lcrypto $(PS5_LAUNCHER_LIBS)
++PAYLOAD_LIBS := -L$(PS5_LIB)/lib -lcurl -lmicrohttpd -lssl -lcrypto $(PS5_LAUNCHER_LIBS) -lc++ -lc++abi -lunwind
+ PS5_FS_WRAPS := -Wl,--wrap=openat -Wl,--wrap=mkdirat -Wl,--wrap=fstatat -Wl,--wrap=linkat -Wl,--wrap=renameat -Wl,--wrap=unlinkat
++# UnRAR (C++) extracts fileditch RAR5 folder dumps after download. Third-party
++# sources keep their own warning profile: -Werror never applies to them. The
++# prospe-ro-clang++ wrapper injects -l flags clang reports unused under -c, so
++# the PS5 compile rules suppress that one warning class. __builtin_cpu_supports
++# lowers to __cpu_model, a symbol only libgcc's crtbegin defines; the PS5 has no
++# libgcc, so pin the dispatch to 0 — every unrar consumer (CRC, BLAKE2, AES-NI)
++# keeps its generic C fallback, staying correct just without SIMD.
++UNRAR_DIR := third_party/unrar
++UNRAR_NAMES := rar strlist strfn pathfn smallfn global file filefn filcreat archive arcread \
++	unicode system crypt crc rawread encname resource match timefn rdwrfn consio options \
++	errhnd rarvm secpassword rijndael getbits sha1 sha256 blake2s hash extinfo extract volume \
++	list find unpack headers threadpool rs16 cmddata ui largepage filestr scantree dll qopen
++UNRAR_CXXFLAGS := -O2 -std=c++11 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -DRAR_SMP -DRARDLL \
++	-D'__builtin_cpu_supports(x)=0' \
++	-Wno-logical-op-parentheses -Wno-switch -Wno-dangling-else
++EXTRACT_CXXFLAGS := -std=c++11 -O2 -g -Wall -Wextra -Werror -Wno-misleading-indentation
++UNRAR_HOST_OBJS := $(addprefix build/unrar/host/,$(addsuffix .o,$(UNRAR_NAMES))) \
++	build/unrar/host/extract_unrar.o
++UNRAR_PS5_OBJS := $(addprefix build/unrar/ps5/,$(addsuffix .o,$(UNRAR_NAMES))) \
++	build/unrar/ps5/extract_unrar.o
++build/unrar/host/%.o: $(UNRAR_DIR)/%.cpp
++	@mkdir -p $(dir $@)
++	$(HOST_CC) $(UNRAR_CXXFLAGS) -c $< -o $@
++build/unrar/host/%.o: backend/%.cpp
++	@mkdir -p $(dir $@)
++	$(HOST_CC) $(EXTRACT_CXXFLAGS) -Ithird_party -c $< -o $@
++build/unrar/ps5/%.o: $(UNRAR_DIR)/%.cpp
++	@mkdir -p $(dir $@)
++	$(PS5_CXX) -Wno-unused-command-line-argument $(UNRAR_CXXFLAGS) -c $< -o $@
++build/unrar/ps5/%.o: backend/%.cpp
++	@mkdir -p $(dir $@)
++	$(PS5_CXX) -Wno-unused-command-line-argument $(EXTRACT_CXXFLAGS) -Ithird_party -c $< -o $@
+ .PHONY: host payload payload-core test-backend test-launcher test-payload-imports test-updates
+ build/generated/network.h build/generated/launcher.h &: tools/embed-launcher.py config/network.json launcher/sce_sys/param.json launcher/sce_sys/icon0.png
+ 	python3 tools/embed-launcher.py
+ host: build/orbit-host
+-build/orbit-host: $(SOURCES) $(HEADERS) $(GENERATED)
+-	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) -DORBIT_DESKTOP $(SOURCES) -o $@ -lcurl -lmicrohttpd -lssl -lcrypto -lpthread -lm
+-build/orbit-test: $(SOURCES) $(HEADERS) $(GENERATED)
+-	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) -DORBIT_DESKTOP -DORBIT_TEST $(SOURCES) -o $@ -lcurl -lmicrohttpd -lssl -lcrypto -lpthread -lm
++build/orbit-host: $(SOURCES) $(HEADERS) $(GENERATED) $(UNRAR_HOST_OBJS)
++	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) -DORBIT_DESKTOP $(SOURCES) $(UNRAR_HOST_OBJS) -o $@ -lcurl -lmicrohttpd -lssl -lcrypto -lpthread -lm $(HOST_CXXLIBS)
++build/orbit-test: $(SOURCES) $(HEADERS) $(GENERATED) $(UNRAR_HOST_OBJS)
++	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) -DORBIT_DESKTOP -DORBIT_TEST $(SOURCES) $(UNRAR_HOST_OBJS) -o $@ -lcurl -lmicrohttpd -lssl -lcrypto -lpthread -lm $(HOST_CXXLIBS)
+ payload: build/orbit_store.elf
+ # The runtime is the copy saved on the console for payload managers to start.
+-build/orbit_runtime.elf: $(PAYLOAD_SOURCES) $(HEADERS) launcher/install.h $(GENERATED) Makefile
+-	$(PAYLOAD_CC) $(PAYLOAD_SOURCES) -o $@ $(PAYLOAD_LIBS) $(PS5_FS_WRAPS)
++build/orbit_runtime.elf: $(PAYLOAD_SOURCES) $(HEADERS) launcher/install.h $(GENERATED) $(UNRAR_PS5_OBJS) Makefile
++	$(PAYLOAD_CC) $(PAYLOAD_SOURCES) $(UNRAR_PS5_OBJS) -o $@ $(PAYLOAD_LIBS) $(PS5_FS_WRAPS)
+ 	$(PS5_STRIP) --strip-debug $@
+ # The public payload: the same server and icon setup, carrying the runtime it saves.
+-build/orbit_store.elf: $(PAYLOAD_SOURCES) $(HEADERS) launcher/install.h launcher/runtime_image.c $(GENERATED) build/orbit_runtime.elf Makefile
+-	$(PAYLOAD_CC) -DORBIT_EMBED_RUNTIME $(PAYLOAD_SOURCES) launcher/runtime_image.c -o $@ $(PAYLOAD_LIBS) $(PS5_FS_WRAPS)
++build/orbit_store.elf: $(PAYLOAD_SOURCES) $(HEADERS) launcher/install.h launcher/runtime_image.c $(GENERATED) $(UNRAR_PS5_OBJS) build/orbit_runtime.elf Makefile
++	$(PAYLOAD_CC) -DORBIT_EMBED_RUNTIME $(PAYLOAD_SOURCES) launcher/runtime_image.c $(UNRAR_PS5_OBJS) -o $@ $(PAYLOAD_LIBS) $(PS5_FS_WRAPS)
+ payload-core: build/orbit_core.elf
+-build/orbit_core.elf: $(SOURCES) $(HEADERS) $(GENERATED) Makefile
+-	$(PS5_CC) $(CPPFLAGS) $(CFLAGS) -Wno-unreachable-code-generic-assoc -I$(PS5_LIB)/include $(SOURCES) -o $@ -L$(PS5_LIB)/lib -lcurl -lmicrohttpd -lssl -lcrypto $(PS5_FS_WRAPS)
++build/orbit_core.elf: $(SOURCES) $(HEADERS) $(GENERATED) $(UNRAR_PS5_OBJS) Makefile
++	$(PS5_CC) $(CPPFLAGS) $(CFLAGS) -Wno-unreachable-code-generic-assoc -I$(PS5_LIB)/include $(SOURCES) $(UNRAR_PS5_OBJS) -o $@ -L$(PS5_LIB)/lib -lcurl -lmicrohttpd -lssl -lcrypto -lc++ -lc++abi -lunwind $(PS5_FS_WRAPS)
+ test-updates: build/orbit-host build/orbit-test
+ 	python3 tests/update_integration.py
+ 
+@@ -84,10 +120,10 @@
+ BENCH_SOURCES := $(filter-out backend/main.c backend/api.c,$(SOURCES)) experiments/transfer-benchmark/main.c
+ .PHONY: transfer-benchmark-ps5 test-transfer-benchmark
+ transfer-benchmark-ps5: build/orbit_transfer_benchmark.elf
+-build/orbit_transfer_benchmark.elf: $(BENCH_SOURCES) $(HEADERS) $(GENERATED) build/generated/benchmark-secret.h Makefile
+-	$(PS5_CC) $(CPPFLAGS) $(CFLAGS) -DORBIT_BENCHMARK -Wno-unreachable-code-generic-assoc -I$(PS5_LIB)/include $(BENCH_SOURCES) -o $@ -L$(PS5_LIB)/lib -lcurl -lmicrohttpd -lssl -lcrypto $(PS5_FS_WRAPS)
+-build/orbit-transfer-benchmark-test: $(BENCH_SOURCES) $(HEADERS) $(GENERATED) build/generated/benchmark-secret.h Makefile
+-	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) -D_DEFAULT_SOURCE -DORBIT_DESKTOP -DORBIT_TEST -DORBIT_BENCHMARK $(BENCH_SOURCES) -o $@ -lcurl -lmicrohttpd -lssl -lcrypto -lpthread -lm
++build/orbit_transfer_benchmark.elf: $(BENCH_SOURCES) $(HEADERS) $(GENERATED) build/generated/benchmark-secret.h $(UNRAR_PS5_OBJS) Makefile
++	$(PS5_CC) $(CPPFLAGS) $(CFLAGS) -DORBIT_BENCHMARK -Wno-unreachable-code-generic-assoc -I$(PS5_LIB)/include $(BENCH_SOURCES) $(UNRAR_PS5_OBJS) -o $@ -L$(PS5_LIB)/lib -lcurl -lmicrohttpd -lssl -lcrypto -lc++ -lc++abi -lunwind $(PS5_FS_WRAPS)
++build/orbit-transfer-benchmark-test: $(BENCH_SOURCES) $(HEADERS) $(GENERATED) build/generated/benchmark-secret.h $(UNRAR_HOST_OBJS) Makefile
++	$(HOST_CC) $(CPPFLAGS) $(CFLAGS) -D_DEFAULT_SOURCE -DORBIT_DESKTOP -DORBIT_TEST -DORBIT_BENCHMARK $(BENCH_SOURCES) $(UNRAR_HOST_OBJS) -o $@ -lcurl -lmicrohttpd -lssl -lcrypto -lpthread -lm $(HOST_CXXLIBS)
+ test-transfer-benchmark: build/orbit-transfer-benchmark-test
+ 	python3 tests/console_benchmark_integration.py
+ 
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/THIRD-PARTY-NOTICES.md /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/THIRD-PARTY-NOTICES.md
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/THIRD-PARTY-NOTICES.md	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/THIRD-PARTY-NOTICES.md	2026-10-06 18:29:31.755582100 +0200
+@@ -12,6 +12,7 @@
+ | GNU libmicrohttpd | 1.0.1 | LGPL-2.1-or-later | [licenses/LGPL-2.1.txt](licenses/LGPL-2.1.txt) | `libmicrohttpd-1.0.1.tar.gz` in each release; [gnu.org](https://www.gnu.org/software/libmicrohttpd/) |
+ | curl (libcurl) | 8.18.0 | curl licence | [licenses/curl.txt](licenses/curl.txt) | `curl-8.18.0.tar.xz` in the source bundle; [curl.se](https://curl.se/download/curl-8.18.0.tar.xz) |
+ | OpenSSL | 3.5.2 | Apache-2.0 | [licenses/Apache-2.0.txt](licenses/Apache-2.0.txt) | `openssl-3.5.2.tar.gz` in the source bundle; [openssl.org](https://github.com/openssl/openssl/releases/tag/openssl-3.5.2) |
++| UnRAR (RAR extraction), stored in `third_party/unrar` | 7.30 beta 1 | UnRAR licence (freeware; handling RAR archives without recreating the RAR algorithm) | [licenses/unrar.txt](licenses/unrar.txt); embedded notices in [third_party/unrar/acknow.txt](third_party/unrar/acknow.txt) | Exact unmodified files in `third_party/unrar/`; [rarlab.com](https://www.rarlab.com/rar_add.htm) |
+ | cJSON | 1.7.19 | MIT | [licenses/cJSON-MIT.txt](licenses/cJSON-MIT.txt) | Exact files in `build-inputs/cjson/`; [DaveGamble/cJSON](https://github.com/DaveGamble/cJSON/tree/v1.7.19) |
+ | React and React DOM | 19.3.0 | MIT | [licenses/React-MIT.txt](licenses/React-MIT.txt) | [facebook/react](https://github.com/facebook/react) |
+ | scheduler | 0.28.0 | MIT | [licenses/scheduler-MIT.txt](licenses/scheduler-MIT.txt) | [facebook/react](https://github.com/facebook/react) |
+@@ -20,6 +21,8 @@
+ 
+ libmicrohttpd is linked statically. Its complete source and Orbit's complete source are both provided, so you can rebuild `orbit_store.elf` with a modified libmicrohttpd using the steps in [BUILDING.md](BUILDING.md).
+ 
++UnRAR is linked statically and its source ships unmodified in `third_party/unrar/`, so the licence permits distributing it inside Orbit. Orbit only extracts archives and does not implement RAR compression. Its embedded third-party notices (Intel Slicing-by-8 CRC under BSD-3-Clause, public-domain AES, SHA-1 and PPMII code, and BLAKE2sp) are retained in `third_party/unrar/acknow.txt`, which the binary distribution must keep alongside this file.
++
+ ## Components in the TV app (`app/`, PPSA99177)
+ 
+ The native TV app is a separate program with its own build (`app/README.md`). It is GPL-3.0-or-later.
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/host/fixture.cpp /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/host/fixture.cpp
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/host/fixture.cpp	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/host/fixture.cpp	2026-10-06 19:04:43.059137100 +0200
+@@ -466,7 +466,8 @@
+     return "{\"enabled\":" + enabled + ",\"acknowledged\":" + (acknowledged_ ? "true" : "false") +
+            ",\"noticeVersion\":1,\"options\":[{\"id\":\"vikingfile\",\"label\":\"Vikingfile\","
+            "\"releaseCount\":2,\"downloadReady\":true},{\"id\":\"archive\",\"label\":"
+-           "\"Archive.org\",\"releaseCount\":15,\"downloadReady\":true}]}";
++           "\"Archive.org\",\"releaseCount\":15,\"downloadReady\":true},{\"id\":\"fileditch\","
++           "\"label\":\"Fileditch\",\"releaseCount\":0,\"downloadReady\":true}]}";
+ }
+ 
+ std::string Fixture::catalogue_json() const
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/src/orbit/downloads.cpp /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/src/orbit/downloads.cpp
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/src/orbit/downloads.cpp	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/src/orbit/downloads.cpp	2026-10-06 17:48:44.131409500 +0200
+@@ -409,7 +409,8 @@
+         const char *status = job.status == "complete" ? "Complete" : status_label(job.status);
+         const ui::Color status_ink = job.status == "error"      ? ui::color::bad
+                                      : job.status == "complete" ? ui::color::ok
+-                                     : job.status == "downloading" || job.status == "verifying"
++                                     : job.status == "downloading" || job.status == "extracting" ||
++                                             job.status == "verifying"
+                                          ? ui::Color::rgb(0xa9c6ff)
+                                          : ui::color::text2;
+         const float status_width = type.regular.measure(status, 16.0f);
+@@ -463,6 +464,10 @@
+                 else
+                     std::snprintf(right, sizeof(right), "Waiting to retry\xE2\x80\xA6");
+             }
++            else if (job.status == "extracting")
++            {
++                std::snprintf(right, sizeof(right), "Extracting archive\xE2\x80\xA6");
++            }
+             else if (job.speed > 0.0)
+             {
+                 const double minutes = std::ceil((job.total - job.received) / job.speed / 60.0);
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/src/orbit/game_page.cpp /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/src/orbit/game_page.cpp
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/src/orbit/game_page.cpp	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/src/orbit/game_page.cpp	2026-10-06 18:45:15.117129100 +0200
+@@ -209,9 +209,10 @@
+     float notes_end = where.notes_top;
+     if (state.paired && now.show_download && release.browser_only())
+     {
++        const std::string provider = release.source_id == "fileditch" ? "Fileditch" : "Vikingfile";
+         if (list != nullptr)
+-            ui::text(*list, type.semibold, "Vikingfile: start here", kTextX, notes_end + 22.0f,
+-                     22.0f, ui::color::text);
++            ui::text(*list, type.semibold, (provider + ": start here").c_str(), kTextX,
++                     notes_end + 22.0f, 22.0f, ui::color::text);
+         notes_end += 38.0f;
+         paragraph("This option downloads through the PS5 web browser. Open the browser "
+                   "version of Orbit to use it.",
+@@ -221,8 +222,8 @@
+             "1. Select Open browser version. Your game, source and save location will already be selected.",
+             kTextX, notes_end, kColumn, 19.0f, ui::color::text2);
+         notes_end += 10.0f;
+-        paragraph("2. Check your drive and select Open download page on PS5. On Vikingfile, "
+-                  "complete any verification and select the site's Download button.",
++        paragraph("2. Check your drive and select Open download page on PS5. On " + provider +
++                  ", complete any verification and select the site's Download button.",
+                   kTextX, notes_end, kColumn, 19.0f, ui::color::text2);
+         notes_end += 10.0f;
+         paragraph("3. Return to Orbit Store. Open Downloads to follow progress once Orbit has "
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/src/orbit/model.cpp /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/src/orbit/model.cpp
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/src/orbit/model.cpp	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/src/orbit/model.cpp	2026-10-06 17:48:26.451525700 +0200
+@@ -62,19 +62,21 @@
+ {
+     if (status == "downloading")
+         return 0;
+-    if (status == "verifying")
++    if (status == "extracting")
+         return 1;
+-    if (status == "queued")
++    if (status == "verifying")
+         return 2;
+-    if (status == "retrying")
++    if (status == "queued")
+         return 3;
+-    if (status == "paused")
++    if (status == "retrying")
+         return 4;
+-    if (status == "error")
++    if (status == "paused")
+         return 5;
+-    if (status == "complete")
++    if (status == "error")
+         return 6;
+-    return 7;
++    if (status == "complete")
++        return 7;
++    return 8;
+ }
+ 
+ } // namespace
+@@ -625,8 +627,8 @@
+ 
+ bool job_active(const Job &job)
+ {
+-    return job.status == "queued" || job.status == "downloading" || job.status == "retrying" ||
+-           job.status == "verifying";
++    return job.status == "queued" || job.status == "downloading" || job.status == "extracting" ||
++           job.status == "retrying" || job.status == "verifying";
+ }
+ 
+ bool job_inactive(const Job &job)
+@@ -638,6 +640,8 @@
+ {
+     if (status == "downloading")
+         return "Downloading";
++    if (status == "extracting")
++        return "Extracting";
+     if (status == "verifying")
+         return "Verifying";
+     if (status == "queued")
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/src/orbit/model.hpp /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/src/orbit/model.hpp
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/src/orbit/model.hpp	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/src/orbit/model.hpp	2026-10-06 17:48:44.103684000 +0200
+@@ -360,7 +360,7 @@
+ bool contains(const std::vector<std::string> &values, std::string_view value);
+ 
+ // Statuses, as the web storefront words them.
+-bool job_active(const Job &job);   // queued, downloading, retrying, verifying
++bool job_active(const Job &job);   // queued, downloading, extracting, retrying, verifying
+ bool job_inactive(const Job &job); // complete or cancelled
+ const char *status_label(std::string_view status);
+ 
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/src/orbit/settings.cpp /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/src/orbit/settings.cpp
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/src/orbit/settings.cpp	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/src/orbit/settings.cpp	2026-10-06 18:45:15.143442800 +0200
+@@ -314,8 +314,8 @@
+     const SettingResult &result = ctx_.store.setting_result();
+     const bool saving = result.busy && result.setting == Setting::sources;
+     pane.heading(state.sources.acknowledged ? "Download sources" : "Choose your sources");
+-    pane.body("Choose where Orbit gets your downloads. Select one or both; you can change this "
+-              "anytime.");
++    pane.body("Choose where Orbit gets your downloads. Select any combination; you can change "
++              "this anytime.");
+     pane.gap(8.0f);
+ 
+     // .source-card: a check and the source's name.
+@@ -326,7 +326,8 @@
+     {
+         const SourceOption &option = state.sources.options[static_cast<std::size_t>(i)];
+         const bool on = contains(draft_, option.id);
+-        browser_only_source = browser_only_source || option.id == "vikingfile";
++        browser_only_source =
++            browser_only_source || option.id == "vikingfile" || option.id == "fileditch";
+         const float w = type.medium.measure(option.label, 21.0f) + 104.0f;
+         const ui::Rect r{cx, cy, w, 60.0f};
+         if (pane.list != nullptr)
+@@ -356,8 +357,8 @@
+         pane.y = cy + 60.0f + 18.0f;
+     }
+     if (browser_only_source)
+-        pane.fine("Vikingfile downloads start in the browser version, which this app opens "
+-                  "for you.");
++        pane.fine("Vikingfile and Fileditch downloads start in the browser version, which this "
++                  "app opens for you.");
+ 
+     // .source-notice, then .source-acknowledgement.
+     pane.rule();
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/tests/unit/model_test.cpp /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/tests/unit/model_test.cpp
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/tests/unit/model_test.cpp	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/tests/unit/model_test.cpp	2026-10-06 17:48:44.131409500 +0200
+@@ -303,6 +303,7 @@
+     for (const auto &[status, view, label] :
+          std::vector<std::tuple<const char *, JobView, const char *>>{
+              {"downloading", JobView::active, "Downloading"},
++             {"extracting", JobView::active, "Extracting"},
+              {"queued", JobView::active, "Queued"},
+              {"paused", JobView::active, "Paused"},
+              {"retrying", JobView::active, "Retrying"},
+@@ -316,6 +317,8 @@
+     }
+     job.status = "paused";
+     EXPECT_FALSE(job_active(job));
++    job.status = "extracting";
++    EXPECT_TRUE(job_active(job));
+     job.status = "verifying";
+     EXPECT_TRUE(job_active(job));
+ }
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/tests/unit/starter_test.cpp /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/tests/unit/starter_test.cpp
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/app/tests/unit/starter_test.cpp	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/app/tests/unit/starter_test.cpp	2026-10-06 19:05:00.199758300 +0200
+@@ -54,7 +54,7 @@
+     }
+     ~TempDir()
+     {
+-        std::system(("rm -rf '" + path + "'").c_str());
++        [[maybe_unused]] const int removed = std::system(("rm -rf '" + path + "'").c_str());
+     }
+     starter::Locations locations() const
+     {
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/browser.c /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/browser.c
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/browser.c	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/browser.c	2026-10-06 18:41:32.943566000 +0200
+@@ -1,6 +1,7 @@
+ #include "orbit.h"
+ #include "browser_platform.h"
+ #include "browser_match.h"
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <time.h>
+@@ -93,7 +94,10 @@
+         .active = native_active, .match = browser_match, .match_context = &match,
+         .remaining = 128U * 1024U * 1024U};
+     while (native_active(&target) && reader.remaining) {
+-        ProbeResult result = probe_target_scan(&target, &reader, "https://vikingfile.com/d/");
++        ProbeResult result = probe_target_scan(
++            &target, &reader, !strcmp(r->source, "fileditch")
++                                   ? "https://fileditchfiles.st/"
++                                   : "https://vikingfile.com/d/");
+         if (result == PROBE_FOUND && active()) {
+             copy_text(r->url, sizeof r->url, match.url);
+             memset(&match, 0, sizeof match);
+@@ -117,7 +121,13 @@
+         if (session.stop) break;
+         session.pending = false;
+         Release resolved = session.release;
+-        state_locked("waiting", "On the Vikingfile page, complete any verification and select Download. Then return to Orbit Store and open Downloads. Orbit checks the file before adding it to your queue.");
++        char intro[256];
++        snprintf(intro, sizeof intro,
++                 "On the %s page, complete any verification and select Download. Then return to "
++                 "Orbit Store and open Downloads. Orbit checks the file before adding it to your "
++                 "queue.",
++                 !strcmp(session.release.source, "fileditch") ? "Fileditch" : "Vikingfile");
++        state_locked("waiting", intro);
+         pthread_mutex_unlock(&orbit.mutex);
+         char error[256] = {0}, etag[256] = {0}, modified[128] = {0};
+         bool ok = capture(&resolved, error, sizeof error);
+@@ -184,6 +194,7 @@
+     cJSON_AddStringToObject(o, "message", session.message);
+     cJSON_AddStringToObject(o, "jobId", session.job_id);
+     cJSON_AddStringToObject(o, "title", session.title);
++    cJSON_AddStringToObject(o, "source", session.release.source);
+     pthread_mutex_unlock(&orbit.mutex);
+     return o;
+ }
+@@ -227,7 +238,12 @@
+             session.job_id[0] = 0;
+             session.busy = session.pending = true;
+             atomic_store(&session.cancel, false);
+-            state_locked("opening", "Opening Vikingfile on your PS5. Select Download on that page, then return to Orbit Store to follow progress.");
++            char opening[256];
++            snprintf(opening, sizeof opening,
++                     "Opening %s on your PS5. Select Download on that page, then return to Orbit "
++                     "Store to follow progress.",
++                     !strcmp(session.release.source, "fileditch") ? "Fileditch" : "Vikingfile");
++            state_locked("opening", opening);
+             pthread_cond_signal(&session.changed);
+             code = 202;
+         }
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/browser_match.c /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/browser_match.c
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/browser_match.c	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/browser_match.c	2026-10-06 15:09:36.254380800 +0200
+@@ -8,7 +8,10 @@
+ }
+ bool browser_match(void *context, const unsigned char *bytes, size_t length) {
+     BrowserMatch *match = context;
+-    const char *prefix = "https://vikingfile.com/d/";
++    /* Fileditch CDN hosts rotate; only the scheme is stable, so provider
++     * validation (page path plus signature) selects the single real route. */
++    const char *prefix = !strcmp(match->release->source, "fileditch") ? "https://"
++                                                                     : "https://vikingfile.com/d/";
+     const size_t plen = strlen(prefix);
+     for (size_t step = 1; step <= 2; step++) {
+         for (size_t i = 0; (plen + 1) * step <= length && i <= length - (plen + 1) * step; i++) {
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/browser_match.h /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/browser_match.h
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/browser_match.h	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/browser_match.h	2026-10-06 18:51:41.601134700 +0200
+@@ -5,7 +5,8 @@
+     const Release *release;
+     char url[3 * sizeof(((Release *)0)->filename) + 64];
+ } BrowserMatch;
+-/* Extract only a complete, filename-bound Vikingfile route. Never retain bytes
++/* Extract only a complete, filename-bound provider route: a Vikingfile /d/ link
++ * or a fileditch CDN link validated against the bound page. Never retain bytes
+  * from other pages, credentials, cookies or storage signatures. */
+ bool browser_match(void *context, const unsigned char *bytes, size_t length);
+ #endif
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/catalog.c /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/catalog.c
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/catalog.c	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/catalog.c	2026-10-06 15:09:36.254380800 +0200
+@@ -86,7 +86,8 @@
+             !strcmp(r->url, "https://raw.githubusercontent.com/DaveGamble/cJSON/v1.7.19/LICENSE") &&
+             !strcmp(r->sha256, "a36dda207c36db5818729c54e7ad4e8b0c6fba847491ba64f372c1a2037b6d5c") ? 0 : -1;
+     if (!identifier(r->game_id) || !*r->title_id ||
+-        (strcmp(r->format, "FFPFSC") && strcmp(r->format, "exFAT")))
++        (strcmp(r->format, "FFPFSC") && strcmp(r->format, "exFAT") &&
++         strcmp(r->format, "Folder")))
+         return -1;
+ #ifdef ORBIT_TEST
+     if (provider_supported(r)) return 0;
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/extract.c /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/extract.c
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/extract.c	1970-01-01 01:00:00.000000000 +0100
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/extract.c	2026-10-06 17:28:34.588258500 +0200
+@@ -0,0 +1,353 @@
++#include "orbit.h"
++#include "extract_unrar.h"
++#include <dirent.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <sys/statvfs.h>
++#include <unistd.h>
++
++/* Post-download extraction for fileditch folder dumps.
++ *
++ * fileditch mirrors dlpsgame's "plain" variants: one header+data encrypted,
++ * non-solid RAR5 archive wrapping a decrypted PS5 game folder in
++ * [DLPSGAME.COM]-<TITLE_ID>/ beside a Note.txt. The transfer worker runs:
++ * inspect (size + free space) -> extract into <root>/.orbit-staging-<job> ->
++ * locate the shallowest directory holding sce_sys/ + eboot.bin -> lift it to
++ * <root>/homebrew/<name> -> best-effort applicationDrmType=standard patch ->
++ * drop the staging tree. The caller unlinks the archive only after
++ * ORBIT_EXTRACT_OK, so a failed extraction can resume without redownloading.
++ *
++ * Console discipline (mirrors ps5upload's payload): heap buffers for anything
++ * that grows, lstat-only directory walks (never follow a symlink out), and
++ * every rename stays on one filesystem — staging shares the destination root.
++ */
++
++#define EXTRACT_PASSWORD "DLPSGAME.COM" /* Shared by every dlpsgame repack. */
++#define EXTRACT_PATH_MAX 1024
++#define EXTRACT_MAX_DEPTH 4
++#define EXTRACT_NAME_MAX 96
++#define EXTRACT_SLACK (16ULL * 1024 * 1024)
++
++static void extract_error(char *error, size_t cap, const char *text) {
++    if (error && cap)
++        copy_text(error, cap, text);
++}
++
++bool job_extracts(const Job *job) {
++    /* Phase-1 fileditch releases are single-file dlpsgame RAR5 folder dumps. */
++    return !strcmp(job->release.source, "fileditch");
++}
++
++static int extract_cancelled(void *ctx) {
++    Job *job = ctx;
++    return atomic_load(&job->cancel) || atomic_load(&orbit.stop) ? 1 : 0;
++}
++
++static int check_space(const char *root, uint64_t unpacked, char *error, size_t cap) {
++    struct statvfs v;
++    if (statvfs(root, &v))
++        return 0; /* Best effort; a full disk still surfaces as a write error. */
++    uint64_t avail = (uint64_t)v.f_bavail * (uint64_t)v.f_frsize;
++    uint64_t need = unpacked + unpacked / 64 + EXTRACT_SLACK;
++    if (avail >= need)
++        return 0;
++    if (error && cap) {
++        char wanted[40], have[40];
++        snprintf(wanted, sizeof wanted, "%.1f GB", (double)need / 1e9);
++        snprintf(have, sizeof have, "%.1f GB", (double)avail / 1e9);
++        snprintf(error, cap,
++                 "Extracting needs about %s free, but only %s is available on the drive.",
++                 wanted, have);
++    }
++    return -1;
++}
++
++static int has_game_layout(const char *path) {
++    struct stat st;
++    char sub[EXTRACT_PATH_MAX];
++    if (snprintf(sub, sizeof sub, "%s/sce_sys", path) >= (int)sizeof sub)
++        return 0;
++    if (lstat(sub, &st) || !S_ISDIR(st.st_mode))
++        return 0;
++    if (snprintf(sub, sizeof sub, "%s/eboot.bin", path) >= (int)sizeof sub)
++        return 0;
++    if (lstat(sub, &st) || !S_ISREG(st.st_mode))
++        return 0;
++    return 1;
++}
++
++typedef struct {
++    char *path;
++    unsigned depth;
++} WalkEntry;
++
++static int walk_push(WalkEntry **items, size_t *count, size_t *capacity, const char *path,
++                     unsigned depth) {
++    if (*count == *capacity) {
++        size_t next = *capacity ? *capacity * 2 : 16;
++        WalkEntry *grown = realloc(*items, next * sizeof *grown);
++        if (!grown)
++            return -1;
++        *items = grown;
++        *capacity = next;
++    }
++    size_t length = strlen(path) + 1;
++    char *copy = malloc(length);
++    if (!copy)
++        return -1;
++    memcpy(copy, path, length);
++    (*items)[*count].path = copy;
++    (*items)[*count].depth = depth;
++    (*count)++;
++    return 0;
++}
++
++/* Breadth-first so the shallowest match wins: wrappers nest the game below
++ * [DLPSGAME.COM]-<id>/, and some dumps carry a decrypted/ copy of eboot.bin
++ * deeper down that must not be mistaken for the install root. Returns 1 when
++ * found, 0 when absent, -1 on allocation failure. */
++static int find_game_dir(const char *staging, char *out, size_t cap) {
++    WalkEntry *items = NULL;
++    size_t count = 0, capacity = 0;
++    if (walk_push(&items, &count, &capacity, staging, 0))
++        return -1;
++    int result = 0;
++    for (size_t i = 0; i < count && result == 0; i++) {
++        if (has_game_layout(items[i].path)) {
++            if (strlen(items[i].path) >= cap)
++                result = -1;
++            else {
++                strcpy(out, items[i].path);
++                result = 1;
++            }
++            break;
++        }
++        if (items[i].depth >= EXTRACT_MAX_DEPTH)
++            continue;
++        DIR *dir = opendir(items[i].path);
++        if (!dir)
++            continue;
++        struct dirent *entry;
++        while (result == 0 && (entry = readdir(dir))) {
++            if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
++                continue;
++            size_t base = strlen(items[i].path), name = strlen(entry->d_name);
++            if (base + 1 + name + 1 > EXTRACT_PATH_MAX)
++                continue;
++            char *child = malloc(base + 1 + name + 1);
++            if (!child) {
++                result = -1;
++                break;
++            }
++            memcpy(child, items[i].path, base);
++            child[base] = '/';
++            memcpy(child + base + 1, entry->d_name, name + 1);
++            struct stat st;
++            if (!lstat(child, &st) && S_ISDIR(st.st_mode) &&
++                walk_push(&items, &count, &capacity, child, items[i].depth + 1)) {
++                free(child);
++                result = -1;
++                break;
++            }
++            free(child);
++        }
++        closedir(dir);
++    }
++    for (size_t i = 0; i < count; i++)
++        free(items[i].path);
++    free(items);
++    return result;
++}
++
++static void rm_tree(const char *path) {
++    struct stat st;
++    if (lstat(path, &st))
++        return;
++    if (!S_ISDIR(st.st_mode)) {
++        unlink(path); /* Files, symlinks, and leftovers of any other type. */
++        return;
++    }
++    DIR *dir = opendir(path);
++    if (dir) {
++        struct dirent *entry;
++        while ((entry = readdir(dir))) {
++            if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
++                continue;
++            size_t base = strlen(path), name = strlen(entry->d_name);
++            if (base + 1 + name + 1 > EXTRACT_PATH_MAX)
++                continue;
++            char *child = malloc(base + 1 + name + 1);
++            if (!child)
++                break;
++            memcpy(child, path, base);
++            child[base] = '/';
++            memcpy(child + base + 1, entry->d_name, name + 1);
++            rm_tree(child); /* Recurses into directories, unlinks the rest. */
++            free(child);
++        }
++        closedir(dir);
++    }
++    rmdir(path);
++}
++
++/* Archive basename minus the extension, sanitized for exFAT/NTFS names. */
++static void final_folder_name(const char *filename, char *out, size_t cap) {
++    const char *dot = strrchr(filename, '.');
++    size_t length = dot && dot != filename ? (size_t)(dot - filename) : strlen(filename);
++    if (length >= cap)
++        length = cap - 1;
++    for (size_t i = 0; i < length; i++) {
++        unsigned char c = (unsigned char)filename[i];
++        if (c < 0x20 || c == 0x7f || strchr("<>:\"/\\|?*", (char)c))
++            out[i] = '_';
++        else
++            out[i] = (char)c;
++    }
++    out[length] = '\0';
++    while (length > 0 && (out[length - 1] == '.' || out[length - 1] == ' '))
++        out[--length] = '\0';
++    if (!length)
++        copy_text(out, cap, "game");
++}
++
++/* ps5upload patches the same field before registering a dump: decrypted
++ * folders keep a disc/PSN drm type that makes the launcher refuse to boot.
++ * Best effort — a dump whose param.json is already standard stays untouched. */
++static void patch_drm_type(const char *game_dir) {
++    char path[EXTRACT_PATH_MAX];
++    if (snprintf(path, sizeof path, "%s/sce_sys/param.json", game_dir) >= (int)sizeof path)
++        return;
++    unsigned char *data = NULL;
++    size_t length = 0;
++    if (read_regular_file(path, 1024 * 1024, &data, &length))
++        return;
++    cJSON *root = cJSON_ParseWithLength((const char *)data, length);
++    free(data);
++    if (!root)
++        return;
++    char *out = NULL;
++    cJSON *drm = cJSON_GetObjectItemCaseSensitive(root, "applicationDrmType");
++    if (!cJSON_IsString(drm) || !drm->valuestring || strcmp(drm->valuestring, "standard")) {
++        cJSON *replacement = cJSON_CreateString("standard");
++        if (replacement) {
++            if (drm)
++                cJSON_ReplaceItemInObject(root, drm->string, replacement);
++            else
++                cJSON_AddItemToObject(root, "applicationDrmType", replacement);
++            out = cJSON_PrintUnformatted(root);
++        }
++    }
++    cJSON_Delete(root);
++    if (!out)
++        return;
++    char tmp[EXTRACT_PATH_MAX];
++    if (snprintf(tmp, sizeof tmp, "%s.orbit", path) < (int)sizeof tmp) {
++        FILE *file = fopen(tmp, "wb");
++        if (file) {
++            size_t written = strlen(out);
++            bool ok = fwrite(out, 1, written, file) == written;
++            if (fflush(file) || fsync(fileno(file)))
++                ok = false;
++            if (fclose(file))
++                ok = false;
++            if (!ok)
++                unlink(tmp);
++            else if (rename(tmp, path))
++                unlink(tmp);
++        }
++    }
++    free(out);
++}
++
++int job_extract(Job *job, int dir, const char *partial, char *error, size_t cap) {
++    if (error && cap)
++        error[0] = '\0';
++    /* storage_open() resolves the job directory as <root>/homebrew; unrar needs
++     * the real path because it opens the archive itself. */
++    char archive[EXTRACT_PATH_MAX];
++    if (snprintf(archive, sizeof archive, "%s/homebrew/%s", job->root, partial) >=
++        (int)sizeof archive) {
++        extract_error(error, cap, "The archive path is too long for this drive.");
++        return ORBIT_EXTRACT_FAILED;
++    }
++    int volume = 0;
++    uint64_t unpacked = 0;
++    if (orbit_unrar_inspect(archive, EXTRACT_PASSWORD, &volume, &unpacked, error, cap) !=
++        ORBIT_UNRAR_OK)
++        return ORBIT_EXTRACT_FAILED;
++    if (volume) {
++        extract_error(error, cap,
++                      "The archive spans multiple volumes; only single-file downloads are "
++                      "supported.");
++        return ORBIT_EXTRACT_FAILED;
++    }
++    if (check_space(job->root, unpacked, error, cap))
++        return ORBIT_EXTRACT_FAILED;
++
++    char staging[EXTRACT_PATH_MAX];
++    if (snprintf(staging, sizeof staging, "%s/.orbit-staging-%s", job->root, job->id) >=
++        (int)sizeof staging) {
++        extract_error(error, cap, "The staging path is too long for this drive.");
++        return ORBIT_EXTRACT_FAILED;
++    }
++    rm_tree(staging); /* Leftover from an interrupted run of the same job. */
++    if (mkdir(staging, 0755) && errno != EEXIST) {
++        extract_error(error, cap, "Could not create a staging folder on the destination drive.");
++        return ORBIT_EXTRACT_FAILED;
++    }
++    int outcome = orbit_unrar_extract(archive, EXTRACT_PASSWORD, staging, extract_cancelled, job,
++                                      error, cap);
++    if (outcome != ORBIT_UNRAR_OK) {
++        rm_tree(staging);
++        return outcome == ORBIT_UNRAR_CANCELLED ? ORBIT_EXTRACT_CANCELLED : ORBIT_EXTRACT_FAILED;
++    }
++
++    char game[EXTRACT_PATH_MAX];
++    int found = find_game_dir(staging, game, sizeof game);
++    if (found <= 0) {
++        rm_tree(staging);
++        extract_error(error, cap,
++                      found == 0 ? "The archive does not contain a PS5 game folder "
++                                   "(sce_sys and eboot.bin)."
++                                 : "Not enough memory to map the extracted folders.");
++        return ORBIT_EXTRACT_FAILED;
++    }
++    char name[EXTRACT_NAME_MAX];
++    final_folder_name(job->filename, name, sizeof name);
++    struct stat existing;
++    if (!fstatat(dir, name, &existing, AT_SYMLINK_NOFOLLOW)) {
++        rm_tree(staging);
++        if (error && cap)
++            snprintf(error, cap,
++                     "A folder named \"%s\" already exists on the destination drive.", name);
++        return ORBIT_EXTRACT_FAILED;
++    }
++    char final_path[EXTRACT_PATH_MAX];
++    if (snprintf(final_path, sizeof final_path, "%s/homebrew/%s", job->root, name) >=
++        (int)sizeof final_path) {
++        rm_tree(staging);
++        extract_error(error, cap, "The install path is too long for this drive.");
++        return ORBIT_EXTRACT_FAILED;
++    }
++    if (rename(game, final_path)) {
++        if (error && cap)
++            snprintf(error, cap, "Could not move the extracted game into place: %s.",
++                     strerror(errno));
++        rm_tree(staging);
++        return ORBIT_EXTRACT_FAILED;
++    }
++    if (strcmp(game, staging))
++        rm_tree(staging); /* Wrapper and Note.txt remain behind. */
++    fsync(dir);
++    int root_dir = open(job->root, O_RDONLY | O_DIRECTORY);
++    if (root_dir >= 0) {
++        fsync(root_dir);
++        close(root_dir);
++    }
++    patch_drm_type(final_path);
++    return ORBIT_EXTRACT_OK;
++}
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/extract_unrar.cpp /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/extract_unrar.cpp
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/extract_unrar.cpp	1970-01-01 01:00:00.000000000 +0100
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/extract_unrar.cpp	2026-10-06 17:05:26.514818300 +0200
+@@ -0,0 +1,255 @@
++#include "extract_unrar.h"
++
++#include <cstdio>
++#include <cstring>
++
++#ifndef _UNIX
++#define _UNIX /* dll.hpp's platform block; unrar's own raros.hpp provides it normally. */
++#endif
++#include "unrar/dll.hpp"
++
++/* Thin C shim over UnRAR's DLL API. Kept in C++ so dll.hpp's linkage and
++ * unrar's internals never reach the C backend. Passwords are supplied through
++ * the open-time callback because fileditch archives encrypt their headers:
++ * RARSetPassword alone is too late (the header decrypt happens during
++ * RAROpenArchiveEx). Returning -1 from UCM_PROCESSDATA raises RARX_USERBREAK,
++ * which dll.cpp catches and maps to an ERAR_* code, so cancellation never
++ * escapes this boundary as a C++ exception. */
++
++namespace {
++
++struct ShimCtx {
++    const char *password;
++    orbit_unrar_cancel_fn cancel;
++    void *cancel_ctx;
++    bool aborted;
++};
++
++void set_error(char *error, size_t cap, const char *text) {
++    if (error && cap)
++        std::snprintf(error, cap, "%s", text);
++}
++
++void map_rc(int rc, char *error, size_t cap) {
++    switch (rc) {
++        case ERAR_MISSING_PASSWORD:
++            set_error(error, cap, "The archive password could not be supplied.");
++            break;
++        case ERAR_BAD_PASSWORD:
++            set_error(error, cap, "The archive password was rejected.");
++            break;
++        case ERAR_BAD_DATA:
++            set_error(error, cap, "The archive is damaged or its password is wrong.");
++            break;
++        case ERAR_BAD_ARCHIVE:
++        case ERAR_UNKNOWN_FORMAT:
++            set_error(error, cap, "The downloaded file is not a supported RAR archive.");
++            break;
++        case ERAR_EOPEN:
++        case ERAR_EREAD:
++            set_error(error, cap, "The archive could not be read from the drive.");
++            break;
++        case ERAR_ECREATE:
++            set_error(error, cap,
++                      "A file could not be written. The drive may be full or read-only.");
++            break;
++        case ERAR_NO_MEMORY:
++        case ERAR_LARGE_DICT:
++            set_error(error, cap, "The archive needs more memory than this console has available.");
++            break;
++        default:
++            set_error(error, cap, "Archive extraction failed.");
++            break;
++    }
++}
++
++int shim_callback(UINT msg, LPARAM user_data, LPARAM p1, LPARAM p2) {
++    ShimCtx *ctx = reinterpret_cast<ShimCtx *>(static_cast<uintptr_t>(user_data));
++    switch (msg) {
++        case UCM_NEEDPASSWORD: {
++            char *buf = reinterpret_cast<char *>(p1);
++            size_t cap = static_cast<size_t>(p2);
++            if (!ctx->password || !buf || cap == 0)
++                return -1;
++            size_t n = std::strlen(ctx->password);
++            if (n + 1 > cap)
++                return -1;
++            std::memcpy(buf, ctx->password, n + 1);
++            return static_cast<int>(n);
++        }
++        case UCM_NEEDPASSWORDW: {
++            wchar_t *buf = reinterpret_cast<wchar_t *>(p1);
++            size_t cap = static_cast<size_t>(p2);
++            if (!ctx->password || !buf || cap == 0)
++                return -1;
++            size_t n = std::strlen(ctx->password);
++            if (n + 1 > cap)
++                return -1;
++            for (size_t i = 0; i < n; i++)
++                buf[i] = static_cast<wchar_t>(static_cast<unsigned char>(ctx->password[i]));
++            buf[n] = L'\0';
++            return static_cast<int>(n);
++        }
++        case UCM_PROCESSDATA:
++            if (ctx->cancel && ctx->cancel(ctx->cancel_ctx)) {
++                ctx->aborted = true;
++                return -1;
++            }
++            return 0;
++        case UCM_CHANGEVOLUME:
++        case UCM_CHANGEVOLUMEW:
++            /* Inspect already rejects multi-volume sets; never prompt for one. */
++            return -1;
++        case UCM_LARGEDICT:
++        default:
++            return 0;
++    }
++}
++
++/* ASCII paths are the console norm; decode UTF-8 properly so drive labels with
++ * non-ASCII names still land correctly. Invalid bytes become U+FFFD. */
++size_t utf8_to_wide(const char *src, wchar_t *dst, size_t cap) {
++    size_t out = 0;
++    const unsigned char *p = reinterpret_cast<const unsigned char *>(src);
++    while (*p) {
++        uint32_t cp = 0xFFFD;
++        int extra = 0;
++        if (*p < 0x80) {
++            cp = *p;
++        } else if ((*p & 0xE0) == 0xC0) {
++            cp = *p & 0x1Fu;
++            extra = 1;
++        } else if ((*p & 0xF0) == 0xE0) {
++            cp = *p & 0x0Fu;
++            extra = 2;
++        } else if ((*p & 0xF8) == 0xF0) {
++            cp = *p & 0x07u;
++            extra = 3;
++        }
++        const unsigned char *q = p + 1;
++        bool valid = true;
++        for (int i = 0; i < extra; i++) {
++            if ((*q & 0xC0) != 0x80) {
++                valid = false;
++                break;
++            }
++            cp = (cp << 6) | (*q & 0x3Fu);
++            q++;
++        }
++        if (!valid) {
++            cp = 0xFFFD;
++            q = p + 1;
++        }
++        p = q;
++        if (out + 1 >= cap)
++            break;
++        dst[out++] = static_cast<wchar_t>(cp);
++    }
++    dst[out] = L'\0';
++    return out;
++}
++
++HANDLE open_archive(const char *archive, const char *password, ShimCtx *ctx, char *error,
++                    size_t cap) {
++    RAROpenArchiveDataEx od;
++    std::memset(&od, 0, sizeof od);
++    od.ArcName = const_cast<char *>(archive);
++    od.OpenMode = RAR_OM_EXTRACT;
++    od.Callback = shim_callback;
++    od.UserData = static_cast<LPARAM>(reinterpret_cast<uintptr_t>(ctx));
++    HANDLE h = RAROpenArchiveEx(&od);
++    if (!h) {
++        map_rc(static_cast<int>(od.OpenResult), error, cap);
++        return nullptr;
++    }
++    if (password && password[0])
++        RARSetPassword(h, const_cast<char *>(password));
++    return h;
++}
++
++} // namespace
++
++extern "C" int orbit_unrar_inspect(const char *archive, const char *password, int *multi_volume,
++                                   uint64_t *unpacked_size, char *error, size_t cap) {
++    if (error && cap)
++        error[0] = '\0';
++    ShimCtx ctx = {password, nullptr, nullptr, false};
++    HANDLE h = open_archive(archive, password, &ctx, error, cap);
++    if (!h)
++        return ORBIT_UNRAR_FAILED;
++    int volume = 0;
++    uint64_t total = 0;
++    int result = ORBIT_UNRAR_OK;
++    for (;;) {
++        RARHeaderDataEx hd;
++        std::memset(&hd, 0, sizeof hd);
++        int rc = RARReadHeaderEx(h, &hd);
++        if (rc == ERAR_END_ARCHIVE)
++            break;
++        if (rc != ERAR_SUCCESS) {
++            map_rc(rc, error, cap);
++            result = ORBIT_UNRAR_FAILED;
++            break;
++        }
++        if (hd.Flags & (RHDF_SPLITAFTER | RHDF_SPLITBEFORE))
++            volume = 1;
++        if (!(hd.Flags & RHDF_DIRECTORY))
++            total += (static_cast<uint64_t>(hd.UnpSizeHigh) << 32) |
++                     static_cast<uint64_t>(hd.UnpSize);
++        rc = RARProcessFile(h, RAR_SKIP, nullptr, nullptr);
++        if (rc != ERAR_SUCCESS) {
++            map_rc(rc, error, cap);
++            result = ORBIT_UNRAR_FAILED;
++            break;
++        }
++    }
++    RARCloseArchive(h);
++    if (result == ORBIT_UNRAR_OK) {
++        if (multi_volume)
++            *multi_volume = volume;
++        if (unpacked_size)
++            *unpacked_size = total;
++    }
++    return result;
++}
++
++extern "C" int orbit_unrar_extract(const char *archive, const char *password, const char *dest,
++                                   orbit_unrar_cancel_fn cancel, void *cancel_ctx, char *error,
++                                   size_t cap) {
++    if (error && cap)
++        error[0] = '\0';
++    if (!dest || !dest[0]) {
++        set_error(error, cap, "Extraction destination is empty.");
++        return ORBIT_UNRAR_FAILED;
++    }
++    wchar_t destw[1100];
++    utf8_to_wide(dest, destw, sizeof destw / sizeof destw[0]);
++    ShimCtx ctx = {password, cancel, cancel_ctx, false};
++    HANDLE h = open_archive(archive, password, &ctx, error, cap);
++    if (!h)
++        return ORBIT_UNRAR_FAILED;
++    int result = ORBIT_UNRAR_OK;
++    for (;;) {
++        RARHeaderDataEx hd;
++        std::memset(&hd, 0, sizeof hd);
++        int rc = RARReadHeaderEx(h, &hd);
++        if (rc == ERAR_END_ARCHIVE)
++            break;
++        if (rc != ERAR_SUCCESS) {
++            map_rc(rc, error, cap);
++            result = ORBIT_UNRAR_FAILED;
++            break;
++        }
++        rc = RARProcessFileW(h, RAR_EXTRACT, destw, nullptr);
++        if (rc != ERAR_SUCCESS) {
++            if (!ctx.aborted)
++                map_rc(rc, error, cap);
++            result = ctx.aborted ? ORBIT_UNRAR_CANCELLED : ORBIT_UNRAR_FAILED;
++            break;
++        }
++    }
++    RARCloseArchive(h);
++    if (ctx.aborted)
++        result = ORBIT_UNRAR_CANCELLED;
++    return result;
++}
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/extract_unrar.h /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/extract_unrar.h
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/extract_unrar.h	1970-01-01 01:00:00.000000000 +0100
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/extract_unrar.h	2026-10-06 17:03:35.071673900 +0200
+@@ -0,0 +1,26 @@
++#ifndef ORBIT_EXTRACT_UNRAR_H
++#define ORBIT_EXTRACT_UNRAR_H
++#include <stddef.h>
++#include <stdint.h>
++#ifdef __cplusplus
++extern "C" {
++#endif
++/* C view of the C++ unrar shim (extract_unrar.cpp). UnRAR's dll.hpp is a C++
++ * header only when compiled as C++, so every DLL-API call lives behind this
++ * boundary and the backend stays plain C11. */
++#define ORBIT_UNRAR_OK 0
++#define ORBIT_UNRAR_FAILED 1
++#define ORBIT_UNRAR_CANCELLED 2
++/* Return non-zero to abort; drives UnRAR's UCM_PROCESSDATA user break. */
++typedef int (*orbit_unrar_cancel_fn)(void *ctx);
++/* Read headers only: total unpacked size and whether the archive spans volumes. */
++int orbit_unrar_inspect(const char *archive, const char *password, int *multi_volume,
++                        uint64_t *unpacked_size, char *error, size_t cap);
++/* Extract every member under dest (created by the caller). */
++int orbit_unrar_extract(const char *archive, const char *password, const char *dest,
++                        orbit_unrar_cancel_fn cancel, void *cancel_ctx, char *error,
++                        size_t cap);
++#ifdef __cplusplus
++}
++#endif
++#endif
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/orbit.h /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/orbit.h
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/orbit.h	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/orbit.h	2026-10-06 17:08:58.983709000 +0200
+@@ -23,6 +23,7 @@
+ #define ORBIT_SOURCE_NOTICE_VERSION 1
+ #define ORBIT_SOURCE_ARCHIVE 1U
+ #define ORBIT_SOURCE_VIKINGFILE 2U
++#define ORBIT_SOURCE_FILEDITCH 4U
+ typedef struct {
+     unsigned enabled, notice_version;
+     time_t acknowledged_at;
+@@ -135,6 +136,13 @@
+ int storage_prefer(const char *id, char *error, size_t cap);
+ bool storage_matches(const Job *job);
+ int storage_open(const Job *job);
++#define ORBIT_EXTRACT_OK 0
++#define ORBIT_EXTRACT_FAILED 1
++#define ORBIT_EXTRACT_CANCELLED 2
++bool job_extracts(const Job *job);
++/* Consume a fileditch archive into <root>/homebrew/<game>; archive removal is
++ * the caller's job, and only after ORBIT_EXTRACT_OK. */
++int job_extract(Job *job, int dir, const char *partial, char *error, size_t cap);
+ void *download_worker(void *unused);
+ cJSON *jobs_json_locked(void);
+ int job_create_locked(const char *release_id, const char *storage_id, char *error, size_t cap,
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/providers.c /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/providers.c
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/providers.c	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/providers.c	2026-10-06 15:14:45.283587600 +0200
+@@ -41,6 +41,80 @@
+     return -1;
+ }
+ /* Provider boundary: never turn metadata/page URLs into unverified downloads. */
++static bool fileditch_page(const Release *r) {
++    const char *prefix = "https://fileditchfiles.st/", *url = r->browser_url;
++    size_t n = strlen(prefix);
++    if (strncmp(url, prefix, n) || strchr(url + n, '?') || strchr(url + n, '#'))
++        return false;
++    const char *folder = url + n, *sep = strchr(folder, '/');
++    if (!sep || sep == folder) return false;
++    for (const char *p = folder; p < sep; p++)
++        if (!isalnum((unsigned char)*p)) return false;
++    const char *hash = sep + 1, *cut = strchr(hash, '/');
++    if (!cut || cut - hash != 20) return false;
++    for (const char *p = hash; p < cut; p++)
++        if (!isxdigit((unsigned char)*p)) return false;
++    const char *file = cut + 1;
++    if (!file[0] || strchr(file, '/') || strcmp(file, r->filename)) return false;
++    for (const unsigned char *p = (const unsigned char *)file; *p; p++)
++        if (*p < 33 || *p >= 127) return false;
++    return true;
++}
++static bool signed_link(const char *query) {
++    bool md5 = false, expires = false, exp = false, sig = false;
++    while (*query) {
++        const char *end = strchr(query, '&');
++        if (!end) end = query + strlen(query);
++        const char *eq = (const char *)memchr(query, '=', (size_t)(end - query));
++        if (eq) {
++            size_t key = (size_t)(eq - query), value = (size_t)(end - eq - 1);
++            if (value) {
++                if (key == 3 && !memcmp(query, "md5", 3)) md5 = true;
++                else if (key == 7 && !memcmp(query, "expires", 7)) expires = true;
++                else if (key == 3 && !memcmp(query, "exp", 3)) exp = true;
++                else if (key == 3 && !memcmp(query, "sig", 3)) sig = true;
++            }
++        }
++        if (!*end) break;
++        query = end + 1;
++    }
++    return (md5 && expires) || (exp && sig);
++}
++static bool same_path(const char *encoded, const char *raw) {
++    while (*encoded) {
++        unsigned char c = (unsigned char)*encoded;
++        if (c == '%') {
++            if (!encoded[1] || !encoded[2] || hex(encoded[1]) < 0 || hex(encoded[2]) < 0)
++                return false;
++            c = (unsigned char)(hex(encoded[1]) * 16 + hex(encoded[2]));
++            encoded += 3;
++        } else {
++            if (c <= 32 || c >= 127) return false;
++            encoded++;
++        }
++        if (!*raw || (unsigned char)*raw != c) return false;
++        raw++;
++    }
++    return !*raw;
++}
++/* Signed CDN routes rotate hosts and parameters; the bound page path never does. */
++static bool fileditch_cdn(const Release *release) {
++    const char *url = release->url;
++    if (strncmp(url, "https://", 8)) return false;
++    const char *host = url + 8, *p = host;
++    while (*p && *p != '/' && *p != '?' && *p != '#') p++;
++    if (p == host || *p != '/') return false;
++    for (const char *q = host; q < p; q++) {
++        unsigned char c = (unsigned char)*q;
++        if (!isalnum(c) && c != '-' && c != '.') return false;
++    }
++    const char *path = p;
++    while (*p && *p != '?' && *p != '#') p++;
++    if (*p != '?' || strchr(p + 1, '#') || !signed_link(p + 1)) return false;
++    const char *page = strlen(release->browser_url) > 8
++                           ? strchr(release->browser_url + 8, '/') : NULL;
++    return page && same_path(path, page);
++}
+ bool provider_url_supported(const Release *release) {
+     if (!strcmp(release->id, "orbit-network-check"))
+         return !strcmp(release->url,
+@@ -49,6 +123,9 @@
+         return !strncmp(release->url, "https://archive.org/download/", 29) &&
+                strlen(release->url) > 29 &&
+                (!strcmp(release->format, "FFPFSC") || !strcmp(release->format, "exFAT"));
++    /* Fileditch pages are a browser capability; only their signed CDN routes transfer. */
++    if (!strcmp(release->source, "fileditch"))
++        return fileditch_cdn(release);
+     /* Only exact filename-bound direct routes may enter the download queue.
+      * Landing pages are a separate browser capability, never a transfer URL. */
+     const char *prefix = "https://vikingfile.com/d/";
+@@ -76,14 +153,23 @@
+ #ifdef ORBIT_TEST
+     /* Test binaries may parse the catalogue, but may only transfer fixtures. */
+     return !strncmp(release->url, "http://127.0.0.1:", 17) &&
+-           (!strcmp(release->source, "archive") || !strcmp(release->source, "vikingfile"));
++           (!strcmp(release->source, "archive") || !strcmp(release->source, "vikingfile") ||
++            !strcmp(release->source, "fileditch"));
+ #else
+     return provider_url_supported(release);
+ #endif
+ }
+ 
+ bool provider_browser_supported(const Release *release) {
+-    if (!release || strcmp(release->source, "vikingfile")) return false;
++    if (!release) return false;
++    if (!strcmp(release->source, "fileditch")) {
++#ifdef ORBIT_TEST
++        if (!strncmp(release->browser_url, "http://127.0.0.1:", 17)) return true;
++#endif
++        /* The catalogue hands the page itself; the capture supplies the route. */
++        return fileditch_page(release) && !strcmp(release->url, release->browser_url);
++    }
++    if (strcmp(release->source, "vikingfile")) return false;
+ #ifdef ORBIT_TEST
+     if (!strncmp(release->browser_url, "http://127.0.0.1:", 17)) return true;
+ #endif
+@@ -95,5 +181,6 @@
+     if (!candidate || strlen(candidate) >= sizeof release->url) return false;
+     Release resolved = *release;
+     strcpy(resolved.url, candidate);
+-    return !strcmp(release->source, "vikingfile") && provider_supported(&resolved);
++    return (!strcmp(release->source, "vikingfile") || !strcmp(release->source, "fileditch")) &&
++           provider_supported(&resolved);
+ }
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/queue.c /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/queue.c
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/queue.c	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/queue.c	2026-10-06 17:09:18.782340500 +0200
+@@ -259,7 +259,8 @@
+         copy_text(err, cap, "Orbit is stopping. Reconnect after restarting it.");
+         return 503;
+     }
+-    bool active = !strcmp(j->status, "downloading") || !strcmp(j->status, "verifying");
++    bool active = !strcmp(j->status, "downloading") || !strcmp(j->status, "verifying") ||
++                  !strcmp(j->status, "extracting");
+     if (!strcmp(action, "remove")) {
+         if (!removable(j)) {
+             copy_text(err, cap,
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/sources.c /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/sources.c
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/sources.c	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/sources.c	2026-10-06 13:49:23.152310400 +0200
+@@ -8,6 +8,8 @@
+         return ORBIT_SOURCE_ARCHIVE;
+     if (!strcmp(id, "vikingfile"))
+         return ORBIT_SOURCE_VIKINGFILE;
++    if (!strcmp(id, "fileditch"))
++        return ORBIT_SOURCE_FILEDITCH;
+     return 0;
+ }
+ 
+@@ -25,7 +27,9 @@
+     static const struct {
+         const char *id, *label;
+         bool ready;
+-    } providers[] = {{"vikingfile", "Vikingfile", true}, {"archive", "Archive.org", true}};
++    } providers[] = {{"vikingfile", "Vikingfile", true},
++                     {"archive", "Archive.org", true},
++                     {"fileditch", "Fileditch", true}};
+     cJSON *o = cJSON_CreateObject(), *enabled = cJSON_AddArrayToObject(o, "enabled"),
+           *options = cJSON_AddArrayToObject(o, "options");
+     bool acknowledged = orbit.sources.notice_version == ORBIT_SOURCE_NOTICE_VERSION &&
+@@ -51,8 +55,8 @@
+ 
+ int sources_set_locked(const cJSON *input, char *err, size_t cap) {
+     const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(input, "enabled"), *x;
+-    if (!cJSON_IsArray(enabled) || cJSON_GetArraySize(enabled) > 2) {
+-        copy_text(err, cap, "Select Vikingfile, Archive.org, both, or neither.");
++    if (!cJSON_IsArray(enabled) || cJSON_GetArraySize(enabled) > 3) {
++        copy_text(err, cap, "Select Vikingfile, Archive.org, Fileditch, or any combination.");
+         return 400;
+     }
+     unsigned flags = 0;
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/state.c /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/state.c
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/state.c	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/state.c	2026-10-06 17:08:58.979577100 +0200
+@@ -308,7 +308,8 @@
+         int64_t order = json_int(x, "order");
+         j->order = order > 0 && order < 2147483647 ? (unsigned)order : (unsigned)orbit.job_count;
+         j->retry_at = (time_t)json_int(x, "retryAt");
+-        if (!strcmp(j->status, "downloading") || !strcmp(j->status, "verifying")) {
++        if (!strcmp(j->status, "downloading") || !strcmp(j->status, "verifying") ||
++            !strcmp(j->status, "extracting")) {
+             copy_text(j->status, sizeof j->status, "paused");
+             copy_text(j->error, sizeof j->error, "Interrupted. Resume to continue.");
+         }
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/transfer.c /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/transfer.c
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/backend/transfer.c	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/backend/transfer.c	2026-10-06 17:08:58.979577100 +0200
+@@ -402,7 +402,8 @@
+         return 0;
+     }
+     if (*result == CURLE_OK && probe.accepted && probe.written == 1) {
+-        if (owner->probe && !strcmp(owner->release->source, "vikingfile")) {
++        if (owner->probe && (!strcmp(owner->release->source, "vikingfile") ||
++                             !strcmp(owner->release->source, "fileditch"))) {
+             owner->status = probe.status;
+             owner->length = probe.total;
+             copy_text(owner->etag, sizeof owner->etag, probe.etag);
+@@ -938,7 +939,24 @@
+         copy_text(t.error, sizeof t.error, "Destination disconnected before finalization.");
+         goto finish;
+     }
+-    if (linkat(dir, partial, dir, j->filename, 0)) {
++    if (job_extracts(j)) {
++        /* fileditch dumps: consume the archive into an installed game folder. */
++        pthread_mutex_lock(&orbit.mutex);
++        copy_text(j->status, sizeof j->status, "extracting");
++        j->speed = 0;
++        state_save_locked();
++        pthread_mutex_unlock(&orbit.mutex);
++        if (job_extract(j, dir, partial, t.error, sizeof t.error) != ORBIT_EXTRACT_OK)
++            goto finish;
++        if (unlinkat(dir, partial, 0)) {
++            snprintf(t.error, sizeof t.error,
++                     "The game was extracted, but the archive could not be removed: %s.",
++                     strerror(errno));
++            goto finish;
++        }
++        fsync(dir);
++        done = true;
++    } else if (linkat(dir, partial, dir, j->filename, 0)) {
+         /* exFAT does not support hard links. Under the single worker, recheck before rename. */
+         if (errno != EPERM && errno != EOPNOTSUPP && errno != ENOSYS) {
+             copy_text(t.error, sizeof t.error,
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/licenses/unrar.txt /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/licenses/unrar.txt
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/licenses/unrar.txt	1970-01-01 01:00:00.000000000 +0100
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/licenses/unrar.txt	2026-09-13 23:48:47.000000000 +0200
+@@ -0,0 +1,42 @@
++ ******    *****   ******   UnRAR - free utility for RAR archives
++ **   **  **   **  **   **  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++ ******   *******  ******    License for use and distribution of
++ **   **  **   **  **   **   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++ **   **  **   **  **   **         FREE portable version
++                                   ~~~~~~~~~~~~~~~~~~~~~
++
++      The source code of UnRAR utility is freeware. This means:
++
++   1. All copyrights to RAR and the utility UnRAR are exclusively
++      owned by the author - Alexander Roshal.
++
++   2. UnRAR source code may be used in any software to handle
++      RAR archives without limitations free of charge, but cannot be
++      used to develop RAR (WinRAR) compatible archiver and to
++      re-create RAR compression algorithm, which is proprietary.
++      Distribution of modified UnRAR source code in separate form
++      or as a part of other software is permitted, provided that
++      full text of this paragraph, starting from "UnRAR source code"
++      words, is included in license, or in documentation if license
++      is not available, and in source code comments of resulting package.
++
++   3. The UnRAR utility may be freely distributed. It is allowed
++      to distribute UnRAR inside of other software packages.
++
++   4. THE RAR ARCHIVER AND THE UnRAR UTILITY ARE DISTRIBUTED "AS IS".
++      NO WARRANTY OF ANY KIND IS EXPRESSED OR IMPLIED.  YOU USE AT 
++      YOUR OWN RISK. THE AUTHOR WILL NOT BE LIABLE FOR DATA LOSS, 
++      DAMAGES, LOSS OF PROFITS OR ANY OTHER KIND OF LOSS WHILE USING
++      OR MISUSING THIS SOFTWARE.
++
++   5. Installing and using the UnRAR utility signifies acceptance of
++      these terms and conditions of the license.
++
++   6. If you don't agree with terms of the license you must remove
++      UnRAR files from your storage devices and cease to use the
++      utility.
++
++      Thank you for your interest in RAR and UnRAR.
++
++
++                                            Alexander L. Roshal
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/App.tsx /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/App.tsx
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/App.tsx	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/App.tsx	2026-10-06 17:15:50.816519100 +0200
+@@ -184,7 +184,7 @@
+     [orbit.games],
+   );
+   const active = orbit.jobs.filter((j) =>
+-    ["queued", "downloading", "retrying", "verifying"].includes(j.status),
++    ["queued", "downloading", "extracting", "retrying", "verifying"].includes(j.status),
+   ).length;
+   // Start with the newest release so the hero and highlighted tile agree.
+   const focused =
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/BrowserNotice.tsx /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/BrowserNotice.tsx
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/BrowserNotice.tsx	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/BrowserNotice.tsx	2026-10-06 18:41:32.949621000 +0200
+@@ -28,7 +28,9 @@
+           ? "Verification cancelled"
+           : session.state === "validating"
+             ? "Checking your file"
+-            : "Press Download on Vikingfile, then return to Orbit";
++            : session.source === "fileditch"
++              ? "Press Download on Fileditch, then return to Orbit"
++              : "Press Download on Vikingfile, then return to Orbit";
+   return (
+     <aside
+       className="update-notice provider-browser-notice"
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/Details.tsx /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/Details.tsx
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/Details.tsx	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/Details.tsx	2026-10-06 18:41:32.949621000 +0200
+@@ -62,6 +62,8 @@
+   // A source can be switched off by another paired device while this page is open.
+   const release =
+       game.releases.find((r) => r.id === releaseId) || game.releases[0],
++    // Browser-only steps name the provider that hosts the file page.
++    sourceName = release.sourceId === "fileditch" ? "Fileditch" : "Vikingfile",
+     drive = drives.find((d) => d.id === (destination || preferred?.id)),
+     // Jobs are per option and drive. A finished one can be downloaded again once its file is gone.
+     existing = jobs.find(
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/Downloads.tsx /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/Downloads.tsx
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/Downloads.tsx	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/Downloads.tsx	2026-10-06 17:15:50.822959700 +0200
+@@ -189,6 +189,7 @@
+             const active = [
+               "queued",
+               "downloading",
++              "extracting",
+               "retrying",
+               "verifying",
+             ].includes(j.status);
+@@ -255,7 +256,9 @@
+                         ? seconds > 0
+                           ? `Retrying in ${seconds}s`
+                           : "Waiting to retry…"
+-                        : j.speed > 0
++                        : j.status === "extracting"
++                          ? "Extracting archive…"
++                          : j.speed > 0
+                           ? `${bytes(j.speed)}/s · ${Math.ceil((j.total - j.received) / j.speed / 60)} min remaining`
+                           : j.status === "complete"
+                             ? j.verification === "sha256"
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/Sources.tsx /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/Sources.tsx
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/Sources.tsx	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/Sources.tsx	2026-10-06 18:53:45.405702900 +0200
+@@ -49,7 +49,7 @@
+         {settings.acknowledged ? "Download sources" : "Choose your sources"}
+       </h1>
+       <p className="source-intro">
+-        Choose where Orbit gets your downloads. Select one or both; you can
++        Choose where Orbit gets your downloads. Select any combination; you can
+         change this anytime in Sources.
+       </p>
+       <div className="source-grid" role="group" aria-label="Download sources">
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/collection.ts /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/collection.ts
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/collection.ts	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/collection.ts	2026-10-06 17:15:50.791033100 +0200
+@@ -8,16 +8,18 @@
+ }
+ const rank: Record<Job["status"], number> = {
+   downloading: 0,
+-  verifying: 1,
+-  queued: 2,
+-  retrying: 3,
+-  paused: 4,
+-  error: 5,
+-  complete: 6,
+-  cancelled: 7,
++  extracting: 1,
++  verifying: 2,
++  queued: 3,
++  retrying: 4,
++  paused: 5,
++  error: 6,
++  complete: 7,
++  cancelled: 8,
+ };
+ const labels: Record<Job["status"], string> = {
+   downloading: "Downloading",
++  extracting: "Extracting",
+   verifying: "Verifying",
+   queued: "Queued",
+   retrying: "Retrying",
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/styles.css /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/styles.css
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/styles.css	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/styles.css	2026-10-06 17:18:18.227802900 +0200
+@@ -1261,6 +1261,7 @@
+   height: 1rem;
+ }
+ .status.downloading,
++.status.extracting,
+ .status.verifying {
+   color: #a9c6ff;
+ }
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/types.ts /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/types.ts
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/src/types.ts	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/src/types.ts	2026-10-06 18:41:32.973869500 +0200
+@@ -40,7 +40,7 @@
+   addedAt: string | null;
+   releases: Release[];
+ }
+-export type SourceId = "vikingfile" | "archive";
++export type SourceId = "vikingfile" | "archive" | "fileditch";
+ export interface SourceSettings {
+   enabled: SourceId[];
+   acknowledged: boolean;
+@@ -76,6 +76,7 @@
+   status:
+     | "queued"
+     | "downloading"
++    | "extracting"
+     | "paused"
+     | "retrying"
+     | "verifying"
+@@ -214,6 +215,7 @@
+   active: boolean;
+   id: string;
+   title: string;
++  source: string;
+   state:
+     | "idle"
+     | "opening"
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/tools/build-deps.sh /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/tools/build-deps.sh
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/tools/build-deps.sh	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/tools/build-deps.sh	2026-10-06 17:24:21.882416200 +0200
+@@ -9,7 +9,7 @@
+ }
+ fetch https://github.com/openssl/openssl/releases/download/openssl-3.5.2/openssl-3.5.2.tar.gz openssl.tar.gz c53a47e5e441c930c3928cf7bf6fb00e5d129b630e0aa873b08258656e7345ec
+ fetch https://curl.se/download/curl-8.18.0.tar.xz curl.tar.xz 40df79166e74aa20149365e11ee4c798a46ad57c34e4f68fd13100e2c9a91946
+-fetch https://ftp.gnu.org/gnu/libmicrohttpd/libmicrohttpd-1.0.1.tar.gz microhttpd.tar.gz a89e09fc9b4de34dde19f4fcb4faaa1ce10299b9908db1132bbfa1de47882b94
++fetch https://mirrors.kernel.org/gnu/libmicrohttpd/libmicrohttpd-1.0.1.tar.gz microhttpd.tar.gz a89e09fc9b4de34dde19f4fcb4faaa1ce10299b9908db1132bbfa1de47882b94
+ source "$PS5_PAYLOAD_SDK/toolchain/prospero.sh"
+ export CPPFLAGS="-I$PS5_SYSROOT/user/homebrew/include"
+ export LDFLAGS="-L$PS5_SYSROOT/user/homebrew/lib"
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/tools/catalog.py /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/tools/catalog.py
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/tools/catalog.py	2026-10-05 16:44:36.000000000 +0200
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/tools/catalog.py	2026-10-06 18:04:57.669054400 +0200
+@@ -339,6 +339,59 @@
+         raise ValueError('Vikingfile filename/title ID mismatch')
+ 
+ 
++def fileditch_identity(url):
++    """Exact single-file identity: https://fileditchfiles.st/<user>/<hash>/<name>."""
++    match = re.fullmatch(
++        r'https://fileditchfiles\.st/([A-Za-z0-9]+)/([A-Za-z0-9]+)/([^\s/?#\\]+)', url)
++    if not match:
++        raise ValueError('Expected a fileditch single-file URL')
++    encoded = match[3]
++    if re.search(r'%(?![A-Fa-f0-9]{2})', encoded) or any(ord(c) >= 127 for c in encoded):
++        raise ValueError('Malformed encoded filename')
++    filename = urllib.parse.unquote_to_bytes(encoded).decode('utf-8', errors='strict')
++    if (not filename.lower().endswith('.rar') or
++            any(c in filename for c in ('/', '\\', '..')) or
++            any(ord(c) < 32 or ord(c) == 127 for c in filename)):
++        raise ValueError('Unsupported or unsafe single-file name')
++    return match[1] + '/' + match[2], filename
++
++
++def fileditch_page(url):
++    return isinstance(url, str) and bool(re.fullmatch(
++        r'https://fileditchfiles\.st/[A-Za-z0-9]+/[A-Za-z0-9]+/[^\s/?#\\]+', url))
++
++
++def fileditch_filename(r):
++    """A dlpsgame plain mirror: [DLPSGAME.COM]- prefix, one title id, one volume."""
++    tid, filename = r['titleId'], r['filename']
++    if (not re.fullmatch(r'PPSA\d{5}', tid) or
++            re.fullmatch(r'\[DLPSGAME\.COM\]-.*\.rar', filename, re.I) is None or
++            re.search(r'\.part\d+\.rar$', filename, re.I) or
++            re.findall(r'PPSA\d+', filename) != [tid]):
++        raise ValueError('Fileditch filename/title ID mismatch')
++
++
++def fileditch_status_url(url):
++    prefix, filename = fileditch_identity(url)
++    return 'https://fileditchfiles.st/api/' + prefix + '/' + urllib.parse.quote(filename)
++
++
++def fileditch_metadata_evidence(r, metadata, checked_at):
++    """A live status listing proves the file; delivery still runs through the browser."""
++    if not fileditch_page(r['url']) or r.get('browserUrl') != r['url']:
++        raise ValueError('Expected the same exact provider page for browser-only delivery')
++    prefix, filename = fileditch_identity(r['url'])
++    if (metadata.get('status') is not True or type(metadata.get('size')) is not int or
++            metadata['size'] != r['sizeBytes'] or
++            metadata.get('file') != '/' + prefix + '/' + filename or not checked_at):
++        raise ValueError('Fileditch status does not match the selected file')
++    return dict(kind='file-metadata', checkedAt=checked_at, url=r['url'],
++                metadataUrl=fileditch_status_url(r['url']), fileHash=prefix.split('/')[1],
++                exists=True, filename=r['filename'], sizeBytes=r['sizeBytes'],
++                method='Status listing; download runs after the user browser verification',
++                consoleVerified=False)
++
++
+ def viking_metadata_evidence(r, metadata, checked_at):
+     """A checked listing permits the browser flow, not a direct queued transfer."""
+     if not viking_page(r['url']) or r.get('browserUrl') != r['url']:
+@@ -389,6 +442,15 @@
+                 metadata = metadata[0]
+             return viking_metadata_evidence(r, metadata, now())
+         return verify_viking_release(client, r)
++    if r.get('sourceId') == 'fileditch':
++        _, filename = fileditch_identity(r['url'])
++        fileditch_filename(r)
++        if filename != r['filename']:
++            raise ValueError('Fileditch filename/title ID mismatch')
++        status, _, data, _ = client.request(fileditch_status_url(r['url']), limit=100_000)
++        if status != 200:
++            raise ValueError('Unexpected fileditch status response')
++        return fileditch_metadata_evidence(r, json.loads(data), now())
+     identifier, filename = archive_identity(r["url"])
+     _, _, data, _ = client.request("https://archive.org/metadata/" + identifier)
+     metadata = json.loads(data)
+@@ -464,23 +526,36 @@
+                 raise ValueError("Artwork fallback must be a bounded external HTTPS URL")
+         if g["artworkLayout"] not in ("wide", "ambient"):
+             raise ValueError("Unsupported artwork layout")
+-        if r["url"] in urls or r["sourceId"] not in ("archive", "vikingfile") or r["format"] not in ("FFPFSC", "exFAT"):
++        if (r["url"] in urls or r["sourceId"] not in ("archive", "vikingfile", "fileditch")
++                or r["format"] not in ("FFPFSC", "exFAT", "Folder")):
+             raise ValueError("Duplicate or unsupported download source")
+         viking = r['sourceId'] == 'vikingfile'
+-        if 'browserUrl' in r and (not viking or not viking_page(r['browserUrl'])):
++        fileditch = r['sourceId'] == 'fileditch'
++        if fileditch != (r['format'] == 'Folder'):
++            raise ValueError('Fileditch options are dlpsgame Folder dumps and nothing else')
++        if 'browserUrl' in r and (not (viking and viking_page(r['browserUrl']))
++                                  and not (fileditch and fileditch_page(r['browserUrl']))):
+             raise ValueError('Unsupported provider browser URL')
+-        browser_only = viking and viking_page(r['url'])
++        browser_only = (viking and viking_page(r['url'])) or (fileditch and fileditch_page(r['url']))
+         filename = r['filename'] if browser_only else (viking_identity if viking else archive_identity)(r['url'])[1]
+         if browser_only and r.get('browserUrl') != r['url']:
+             raise ValueError('Browser-only options require their exact file page')
+         if viking: viking_filename(r)
++        if fileditch: fileditch_filename(r)
+         if viking and r['provider'] != 'Vikingfile':
+             raise ValueError('Vikingfile format/provider/title identity mismatch')
++        if fileditch and r['provider'] != 'Fileditch':
++            raise ValueError('Fileditch format/provider/title identity mismatch')
+         if (filename != r["filename"] or "/" in filename or "\\" in filename or ".." in filename
+                 or any(ord(c) < 32 or ord(c) == 127 for c in filename)
+                 or len(filename.encode()) >= 160 or len(r["url"].encode()) >= 2048):
+             raise ValueError("Unsafe filename or oversized URL")
+-        expected_suffix = ".ffpfsc" if r["format"] == "FFPFSC" else ".exfat"
++        if fileditch:
++            expected_suffix = ".rar"
++        elif r["format"] == "FFPFSC":
++            expected_suffix = ".ffpfsc"
++        else:
++            expected_suffix = ".exfat"
+         if not filename.lower().endswith(expected_suffix) or type(r["sizeBytes"]) is not int or r["sizeBytes"] <= 0:
+             raise ValueError("Format/size mismatch")
+         evidence = r.get("verification", {})
+@@ -488,9 +563,15 @@
+                 or evidence.get("sizeBytes") != r["sizeBytes"] or evidence.get("filename") != filename):
+             raise ValueError(f"Missing matching source verification: {r['id']}")
+         if browser_only:
++            if fileditch:
++                expected_meta = fileditch_status_url(r['url'])
++                expected_hash = fileditch_identity(r['url'])[0].split('/')[1]
++            else:
++                expected_meta = 'https://vikingfile.com/api/check-file'
++                expected_hash = r['url'].rsplit('/', 1)[-1]
+             if (evidence.get('kind') != 'file-metadata' or evidence.get('exists') is not True or
+-                    evidence.get('metadataUrl') != 'https://vikingfile.com/api/check-file' or
+-                    evidence.get('fileHash') != r['url'].rsplit('/', 1)[-1]):
++                    evidence.get('metadataUrl') != expected_meta or
++                    evidence.get('fileHash') != expected_hash):
+                 raise ValueError('Missing exact public file metadata for browser-only option')
+         elif evidence.get('httpStatus') != (206 if viking else 200) or evidence.get('rangeStatus') != 206:
+             raise ValueError('Missing direct-download range verification')
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/tools/fd-crawl.mjs /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/tools/fd-crawl.mjs
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/tools/fd-crawl.mjs	1970-01-01 01:00:00.000000000 +0100
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/tools/fd-crawl.mjs	2026-10-06 19:16:56.591859800 +0200
+@@ -0,0 +1,114 @@
++// Fileditch source discovery crawler — dlpsgame.com -> archive pages -> fileditch
++// Polite: delays + 429 backoff. Usage: node tools/fd-crawl.mjs [listingPages] [delayMs] [outFile]
++import fs from "node:fs";
++
++const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
++const LISTING_PAGES = Number(process.argv[2] || 1);
++const DELAY = Number(process.argv[3] || 1500);
++const sleep = (ms) => new Promise(r => setTimeout(r, ms));
++
++async function get(url, retries = 2) {
++  for (let attempt = 0; attempt <= retries; attempt++) {
++    try {
++      const r = await fetch(url, { headers: { "user-agent": UA } });
++      if (r.status === 429) {
++        const wait = 20000 * (attempt + 1);
++        console.log(`  [429] ${url} — backing off ${wait / 1000}s`);
++        await sleep(wait);
++        continue;
++      }
++      return { status: r.status, text: r.status === 200 ? await r.text() : "" };
++    } catch (e) {
++      if (attempt === retries) return { status: 0, text: "", error: e.message };
++      await sleep(3000);
++    }
++  }
++  return { status: 429, text: "" };
++}
++
++const log = (...a) => console.log(...a);
++
++// --- 1. collect posts ---
++const postUrls = new Set();
++for (let p = 1; p <= LISTING_PAGES; p++) {
++  const url = p === 1 ? "https://dlpsgame.com/category/ps5/" : `https://dlpsgame.com/category/ps5/page/${p}/`;
++  const { status, text } = await get(url);
++  [...text.matchAll(/href="(https:\/\/dlpsgame\.com\/[a-z0-9-]+-ps5\/?)"/g)].forEach(m => postUrls.add(m[1]));
++  log(`[list p${p}] status=${status} posts=${postUrls.size}`);
++  await sleep(DELAY);
++}
++const posts = [...postUrls].filter(u => !/list-game|list-all/.test(u));
++log(`crawling ${posts.length} posts (delay ${DELAY}ms)`);
++
++// --- 2. posts -> archive pages -> fileditch ---
++const results = [];
++let fdPosts = 0, fdUrls = 0, archivesFetched = 0;
++for (let i = 0; i < posts.length; i++) {
++  const postUrl = posts[i];
++  const slug = postUrl.replace(/^https:\/\/dlpsgame\.com\//, "").replace(/\/$/, "");
++  try {
++    const { status, text } = await get(postUrl);
++    if (status !== 200) { log(`[${i + 1}/${posts.length}] ${slug} HTTP ${status}`); await sleep(DELAY); continue; }
++
++    const titleId = (text.match(/PPSA\d{5}/) || [null])[0];
++    const name = (text.match(/<h1[^>]*>([^<]+)<\/h1>/) || [, slug])[1].trim();
++
++    const payloads = [...text.matchAll(/data-payload="([A-Za-z0-9+\/=]+)"/g)].map(m => {
++      try { return Buffer.from(m[1], "base64").toString("utf8"); } catch { return ""; }
++    }).filter(Boolean);
++    const payloadLinks = new Set();
++    for (const p of payloads) for (const m of p.matchAll(/href=["']([^"']+)["']/g)) payloadLinks.add(m[1]);
++
++    const archiveUrls = [...payloadLinks].filter(u => /\/archives\/\d+/.test(u));
++    const fileditch = [...payloadLinks].filter(u => /fileditchfiles\.st\//.test(u)).map(u => decodeURIComponent(u));
++
++    for (const au of archiveUrls) {
++      await sleep(DELAY);
++      const a = await get(au);
++      archivesFetched++;
++      for (const m of a.text.matchAll(/https?:\/\/fileditchfiles\.st\/[^"'\s<>]+/g)) fileditch.push(decodeURIComponent(m[0]));
++    }
++
++    const uniq = [...new Set(fileditch.map(u => u.replace(/\?.*$/, "")))];
++    if (uniq.length) {
++      fdPosts++; fdUrls += uniq.length;
++      results.push({ slug, name, titleId, postUrl, fileditch: uniq });
++      log(`[${i + 1}/${posts.length}] * ${slug} ${titleId || ""} (${uniq.length} fileditch)`);
++      uniq.forEach(u => log(`     ${u}`));
++    } else if ((i + 1) % 10 === 0) {
++      log(`[${i + 1}/${posts.length}] ${slug} — no fileditch (${archivesFetched} archives checked)`);
++    }
++  } catch (e) {
++    log(`[${i + 1}/${posts.length}] ${slug} ERROR ${e.message}`);
++  }
++  await sleep(DELAY / 2);
++}
++
++// --- 3. validate via Status API ---
++log("\n=== VALIDATE ===");
++const validated = [];
++for (const row of results) {
++  row.valid = [];
++  for (const u of row.fileditch) {
++    const m = u.match(/fileditchfiles\.st\/([^\/]+)\/([^\/]+)\/(.+)$/);
++    if (!m) continue;
++    try {
++      const r = await fetch(`https://fileditchfiles.st/api/${m[1]}/${m[2]}/${m[3]}`);
++      const j = await r.json();
++      const entry = { url: u, alive: !!j.status, size: j.size, views: j.views, file: j.file };
++      row.valid.push(entry);
++      log(`  ${j.status ? "OK " : "DEAD"} ${(j.size / 1048576).toFixed(1)}MB ${row.titleId || "?"} ${decodeURIComponent(m[3])}`);
++    } catch (e) { row.valid.push({ url: u, alive: false, error: e.message }); }
++    await sleep(300);
++  }
++}
++
++const alive = validated.length;
++log(`\n=== SUMMARY ===`);
++log(`posts scanned: ${posts.length}, archive pages: ${archivesFetched}`);
++log(`posts with fileditch: ${fdPosts}, fileditch URLs: ${fdUrls}`);
++log(`alive: ${results.reduce((s, r) => s + r.valid.filter(v => v.alive).length, 0)} / ${fdUrls}`);
++
++const outFile = process.argv[4] || "fd-crawl-results.json";
++fs.writeFileSync(outFile, JSON.stringify({ crawled: new Date().toISOString(), posts: results }, null, 2));
++log(`saved -> ${outFile}`);
+diff -ruN '--exclude=build' '--exclude=node_modules' '--exclude=dist' '--exclude=.deps' '--exclude=.state' '--exclude=third_party' '--exclude=catalog' '--exclude=__pycache__' '--exclude=assets' '--exclude=.git' '--exclude=tsconfig.tsbuildinfo' /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/tools/fd_catalog.py /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/tools/fd_catalog.py
+--- /mnt/c/Users/KX/AppData/Local/Temp/opencode/pristine/orbit-store-0.7.0/tools/fd_catalog.py	1970-01-01 01:00:00.000000000 +0100
++++ /mnt/c/Users/KX/AppData/Local/Temp/opencode/orbit-source/orbit-store-0.7.0/tools/fd_catalog.py	2026-10-06 18:07:42.292444800 +0200
+@@ -0,0 +1,216 @@
++"""Append dlpsgame fileditch folder dumps to the embedded catalogue.
++
++Reads a discovery crawl (fd-crawl-results.json), keeps posts whose single live
++file is one plain [DLPSGAME.COM]-<title ID>.rar, proves every kept file against
++the fileditch status API, fetches post artwork for games the catalogue does not
++know yet, and appends the matching releases plus games to catalog/releases.json
++and catalog/games.json. Existing ids are kept, so the crawl can be re-run.
++
++Run with .venv/bin/python tools/fd_catalog.py <fd-crawl-results.json> [--commit]
++The default is a dry run; --commit writes the catalogue inputs after a clean pass.
++"""
++import json
++import re
++import struct
++import sys
++import time
++import urllib.parse
++import urllib.request
++from pathlib import Path
++
++import catalog as cat
++
++DELAY = 1.2
++LIMIT_PAGE = 6_000_000
++LIMIT_IMAGE = 12_000_000
++UA = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Orbit-Catalogue/1'}
++PLAIN_NAME = re.compile(r'\[DLPSGAME\.COM\]-.*\.rar', re.I)
++TITLE_IN_NAME = re.compile(r'PPSA\d+')
++VERSION_IN_NAME = re.compile(r'(\d{2}\.\d{3}\.\d{3})')
++
++
++def fetch(url, limit):
++    with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=45) as response:
++        if response.status != 200:
++            raise ValueError(f'HTTP {response.status} for {url}')
++        body = response.read(limit)
++        if len(body) >= limit:
++            raise ValueError(f'Oversized response for {url}')
++        return body
++
++
++def og_value(page, name):
++    for pattern in (rf'<meta[^>]+property=["\']{name}["\'][^>]+content=["\']([^"\']+)["\']',
++                    rf'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']{name}["\']'):
++        match = re.search(pattern, page, re.I)
++        if match:
++            return urllib.parse.unquote(match.group(1)).replace('&amp;', '&')
++    return None
++
++
++def image_size(data):
++    """Pixel dimensions of the codecs the storefront serves: PNG/JPEG/GIF/WebP."""
++    if data[:8] == b'\x89PNG\r\n\x1a\n' and len(data) >= 24:
++        return struct.unpack('>II', data[16:24])
++    if data[:2] == b'\xff\xd8':
++        i = 2
++        while i + 9 < len(data):
++            if data[i] != 0xFF:
++                i += 1
++                continue
++            marker = data[i + 1]
++            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE,
++                          0xCF):
++                height, width = struct.unpack('>HH', data[i + 5:i + 9])
++                return width, height
++            if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
++                i += 2
++            else:
++                i += 2 + struct.unpack('>H', data[i + 2:i + 4])[0]
++        raise ValueError('JPEG without a frame header')
++    if data[:6] in (b'GIF87a', b'GIF89a'):
++        return struct.unpack('<HH', data[6:10])
++    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
++        chunk = data[12:16]
++        if chunk == b'VP8X':
++            return (int.from_bytes(data[24:27], 'little') + 1,
++                    int.from_bytes(data[27:30], 'little') + 1)
++        if chunk == b'VP8 ':
++            width, height = struct.unpack('<HH', data[26:30])
++            return width & 0x3FFF, height & 0x3FFF
++        if chunk == b'VP8L':
++            bits = int.from_bytes(data[21:25], 'little')
++            return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
++    raise ValueError('Not a supported image')
++
++
++def candidates(crawl):
++    """Posts whose only live file is one plain single-volume dlpsgame archive."""
++    kept, skipped = [], {'multiple files': 0, 'not one plain .rar': 0, 'title id taken': 0}
++    seen = set()
++    for post in crawl['posts']:
++        alive = [v for v in post.get('valid', []) if v.get('alive')]
++        if len(alive) != 1:
++            skipped['multiple files'] += 1
++            continue
++        name = urllib.parse.unquote(alive[0]['file']).rsplit('/', 1)[-1]
++        title_ids = TITLE_IN_NAME.findall(name)
++        if (PLAIN_NAME.fullmatch(name) is None or len(title_ids) != 1
++                or re.fullmatch(r'PPSA\d{5}', title_ids[0]) is None
++                or re.search(r'\.part\d+\.rar$', name, re.I)):
++            skipped['not one plain .rar'] += 1
++            continue
++        tid = title_ids[0]
++        if post.get('titleId') and post['titleId'] != tid:
++            raise ValueError(f"{post['slug']}: post title id {post['titleId']} != file {tid}")
++        if tid in seen:
++            skipped['title id taken'] += 1
++            continue
++        seen.add(tid)
++        kept.append((post, alive[0], tid, name))
++    return kept, skipped
++
++
++def main():
++    arguments = [a for a in sys.argv[1:] if a != '--commit']
++    if len(arguments) != 1:
++        raise SystemExit(__doc__)
++    commit = '--commit' in sys.argv
++    crawl = json.loads(Path(arguments[0]).read_text(encoding='utf-8'))
++    games, releases = cat.read('games.json'), cat.read('releases.json')
++    release_ids = {r['id'] for r in releases}
++    game_ids = {g['id'] for g in games}
++    by_title = {}
++    for r in releases:
++        by_title.setdefault(r['titleId'], r['gameId'])
++
++    kept, skipped = candidates(crawl)
++    new_releases, new_games, errors, listed = [], [], [], []
++    for post, valid, tid, name in kept:
++        release_id = tid.lower() + '-folder'
++        if release_id in release_ids:
++            listed.append(f'{tid}: already listed')
++            continue
++        try:
++            url = valid['url']
++            metadata = json.loads(fetch(cat.fileditch_status_url(url), 100_000))
++            time.sleep(DELAY)
++            if metadata.get('status') is not True or type(metadata.get('size')) is not int:
++                raise ValueError(f'fileditch status says the file is gone: {url}')
++            if metadata['size'] != valid['size']:
++                print(f'  {tid}: size moved {valid["size"]} -> {metadata["size"]}')
++            version = VERSION_IN_NAME.search(name)
++            release = {
++                'id': release_id,
++                'gameId': by_title.get(tid) or post['slug'].removesuffix('-ps5'),
++                'titleId': tid,
++                'sizeBytes': metadata['size'],
++                'provider': 'Fileditch',
++                'sourceId': 'fileditch',
++                'format': 'Folder',
++                'version': version[1] if version else None,
++                'filename': name,
++                'url': url,
++                'browserUrl': url,
++                'sha256': '',
++                'importEvidence': {
++                    'sourceUrl': post['postUrl'],
++                    'sourceTitle': post['name'],
++                    'sourceTags': [tid],
++                    'sourceField': 'fileditch',
++                    'filePageUrl': url,
++                    'note': 'dlpsgame.com post mirrors the exact [DLPSGAME.COM] archive '
++                            'behind one fileditch file.',
++                },
++            }
++            release['verification'] = cat.fileditch_metadata_evidence(release, metadata, cat.now())
++
++            if tid in by_title:
++                listed.append(f'{tid}: attach to {release["gameId"]}')
++            elif release['gameId'] in game_ids:
++                raise ValueError(f'{release["gameId"]}: game exists without this title id')
++            else:
++                page = fetch(post['postUrl'], LIMIT_PAGE).decode('utf-8', errors='replace')
++                time.sleep(DELAY)
++                cover = og_value(page, 'og:image')
++                if not cover or not cover.startswith('https://'):
++                    raise ValueError(f'{post["postUrl"]}: no HTTPS og:image artwork')
++                image = fetch(cover, LIMIT_IMAGE)
++                time.sleep(DELAY)
++                width, height = image_size(image)
++                layout = 'wide' if width >= height * 1.4 else 'ambient'
++                # dlpsgame's og:description is only "<title> PS5"; omit it like other
++                # games without a reviewed description.
++                game = {
++                    'id': release['gameId'],
++                    'title': urllib.parse.unquote(post['name']).replace('&amp;', '&'),
++                    'cover': cover,
++                    'hero': cover,
++                    'artworkLayout': layout,
++                    'addedAt': cat.now(),
++                }
++                new_games.append(game)
++                listed.append(f'{tid}: new game {game["id"]} ({width}x{height}, {layout})')
++            new_releases.append(release)
++        except Exception as exc:  # one broken post must not sink the rest silently
++            errors.append(f'{tid}: {exc}')
++
++    if errors:
++        print('Refusing to write; every kept post must verify:')
++        print('\n'.join('  ' + e for e in errors))
++        raise SystemExit(1)
++    rows = cat.compile_catalog(games + new_games, releases + new_releases)
++    print(f'Crawl kept {len(kept)} posts (skipped {skipped}); new: '
++          f'{len(new_releases)} releases, {len(new_games)} games; catalogue {len(rows)} options')
++    print('\n'.join('  ' + line for line in listed))
++    if not commit:
++        print('Dry run; pass --commit to write catalog/games.json and catalog/releases.json.')
++        return
++    if new_games:
++        cat.save('games.json', games + new_games)
++    cat.save('releases.json', releases + new_releases)
++    print('Wrote catalog/games.json and catalog/releases.json; run catalog:build next.')
++
++
++if __name__ == '__main__':
++    main()

@@ -12,7 +12,7 @@ The native app requires **kstuff and ShadowMountPlus**. For the app to start Orb
 2. If an older Orbit service is running, stop it from **App settings → Update / reinstall → Stop Orbit to restart** in the browser version. Installing an FFPKG does not replace a running service.
 3. Copy the FFPKG to **`/data/homebrew/` on the PS5**. Allow ShadowMountPlus to register it, then open **Orbit Store** from the **Games row**.
 4. Browse is the starting page. On first use, select **Choose sources**, enable the sources you want and acknowledge the notice. Saving opens Browse. Source choices are shared with the browser.
-5. Choose a game, source, format and destination drive. Follow the [download guide](downloads.md) for direct and Vikingfile browser options.
+5. Choose a game, source, format and destination drive. Follow the [download guide](downloads.md) for direct options and Vikingfile or Fileditch browser options.
 
 Already using Orbit 0.6.0 or later? In the browser version, open **App settings → TV app → Install on this PS5**. Orbit downloads the official FFPKG, verifies it and saves it to `/data/homebrew/`.
 
@@ -20,7 +20,7 @@ Already using Orbit 0.6.0 or later? In the browser version, open **App settings 
 
 1. Get `orbit_store.elf` and `orbit_store.elf.sha256` from the [latest release](https://github.com/saawant12/orbit-store-ps5/releases/latest). Run `shasum -a 256 -c orbit_store.elf.sha256` from their folder.
 2. Load the ELF through your payload manager. Orbit saves its runtime and creates its browser shortcut in the PS5 **Media tab**.
-3. Open **Orbit Store**, then **App settings → Sources**. Choose Archive.org, Vikingfile, or both, and acknowledge the notice. Only download material you have permission to obtain and use.
+3. Open **Orbit Store**, then **App settings → Sources**. Choose Archive.org, Vikingfile, Fileditch, or any combination, and acknowledge the notice. Only download material you have permission to obtain and use.
 
 Both interfaces use the same service, catalogue, favourites and download queue. The TV app does not need a pairing code on the console. The native **App settings** page includes Download sources, Storage, Pair a device, Game catalogue and Updates. **More settings → Open browser version** provides auto-start, payload-manager setup and diagnostics.
 
@@ -87,6 +87,6 @@ The TV app carries a service copy, but replacing the app does not switch the ser
 
 In the TV app, open **App settings → Pair a device** to see the console address and six-digit code. While Orbit is running, visit `http://<ps5-ip>:34177/` on the same network. Choose **Pair devices** and enter the six-digit code shown on the PS5. On the console, **Pair devices** keeps the code visible; **Show code on PS5** repeats its notification. Do not share the code publicly.
 
-Your paired device controls the console’s queue. For Vikingfile browser verification, use the PS5 screen to complete the provider steps even when you start from your phone.
+Your paired device controls the console’s queue. For Vikingfile or Fileditch browser verification, use the PS5 screen to complete the provider steps even when you start from your phone.
 
 [Download guide](downloads.md) · [Library guide](library.md) · [Troubleshooting](troubleshooting.md) · [Project home](../README.md)

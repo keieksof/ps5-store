@@ -4,7 +4,7 @@
 
 Orbit runs on your PS5. Browse games, compare their available sources and formats, and download a single file directly to the console or an attached drive. Open the native TV app from your Games row, or pair a phone or computer to manage the same queue over your local network.
 
-Start with **581 games** from Archive.org and Vikingfile. New games and corrected links arrive through catalogue updates, without reinstalling Orbit. You choose which sources to enable and which storage to use.
+Start with **602 games** from Archive.org, Vikingfile and Fileditch. New games and corrected links arrive through catalogue updates, without reinstalling Orbit. You choose which sources to enable and which storage to use.
 
 [Download Orbit](https://github.com/saawant12/orbit-store-ps5/releases/latest) · [Get started](guides/getting-started.md) · [Download guide](guides/downloads.md) · [Library guide](guides/library.md) · [Troubleshooting](guides/troubleshooting.md)
 
@@ -23,8 +23,8 @@ Start with **581 games** from Archive.org and Vikingfile. New games and correcte
 You need a PS5 that can run homebrew ELF payloads, a payload manager or ELF loader, internet access for downloads, and enough writable storage.
 
 1. **Choose how to open Orbit.** For the native TV app, download and verify `PPSA99177.ffpkg` from the [latest release](https://github.com/saawant12/orbit-store-ps5/releases/latest), copy it to `/data/homebrew/`, then open Orbit from the Games row. This needs **kstuff and ShadowMountPlus**. For the browser version, run `orbit_store.elf` through your loader and open Orbit from the Media tab.
-2. **Choose your sources.** Choose sources in the TV app’s setup screen or **App settings → Download sources**. Select Archive.org, Vikingfile, or both, and acknowledge the download notice. Your choices apply across both versions.
-3. **Pick a download.** Open a game, select its source and format, and choose a drive. Direct options download from the TV app. Vikingfile browser options open the browser version; your selected game, source and drive carry over. Follow **Open download page on PS5 → Download on Vikingfile → return to Orbit**.
+2. **Choose your sources.** Choose sources in the TV app’s setup screen or **App settings → Download sources**. Select Archive.org, Vikingfile, Fileditch, or any combination, and acknowledge the download notice. Your choices apply across both versions.
+3. **Pick a download.** Open a game, select its source and format, and choose a drive. Direct options download from the TV app. Vikingfile and Fileditch browser options open the browser version; your selected game, source and drive carry over. Follow **Open download page on PS5 → Download on the provider page → return to Orbit**.
 4. **Follow your queue.** Open Downloads on the TV or a paired device to check progress, pause or resume.
 
 The TV app includes Orbit's download service and can start it through a compatible ELF loader on **port 9021**. You can also start `orbit_store.elf` yourself. The Media-tab shortcut opens the browser version while the service is running. After a reboot, start your jailbreak before opening Orbit. See the [setup and update guide](guides/getting-started.md) for installation, updates and phone pairing.
@@ -45,7 +45,7 @@ Open Orbit from your Games row and use the controller to browse, explore and cho
 
 ![Native TV app Discover with featured artwork and game collections](assets/0.7.0/native-discover.png)
 
-**Check the details before downloading.** Read about a game, save it to favourites and compare its available download options. Direct options download from the TV app; Vikingfile browser options open the browser version. See the [download guide](guides/downloads.md) for the complete flow.
+**Check the details before downloading.** Read about a game, save it to favourites and compare its available download options. Direct options download from the TV app; Vikingfile and Fileditch browser options open the browser version. See the [download guide](guides/downloads.md) for the complete flow.
 
 ![Native TV app game details with artwork, description and download options](assets/0.7.0/native-details.png)
 
@@ -57,11 +57,11 @@ Choose sources, set your default drive, pair a phone and refresh your game catal
 
 ### The same queue on your phone
 
-Pair a phone on the same network to find a game and choose its download option. Files still go to the PS5’s selected drive. Vikingfile’s provider page and any verification open on the **PS5**, even when you start from your phone.
+Pair a phone on the same network to find a game and choose its download option. Files still go to the PS5’s selected drive. The provider page and any verification open on the **PS5**, even when you start from your phone.
 
 1. **Find a game.** Search the catalogue and filter the available games.
 2. **Compare options.** Check the format, size and destination before downloading.
-3. **Start the provider step.** Open Vikingfile on PS5, press Download there, then return to Orbit.
+3. **Start the provider step.** Open the provider page on PS5, press Download there, then return to Orbit.
 
 <p>
   <a href="assets/0.7.0/phone-browse.jpg"><img src="assets/0.7.0/phone-browse.jpg" width="250" align="top" alt="Step 1: Phone Browse with search and game cards"></a>
@@ -79,13 +79,13 @@ For your existing collection, the [Library guide](guides/library.md) explains in
 
 **Massive improvements to download performance.** The reworked engine uses four connections for supported new downloads, buffers incoming data and preserves progress for pause and resume. Download again also works after removing a cancelled partial.
 
-**More control from your TV.** Choose sources, set a default drive, pair a device and refresh the catalogue in the native app. Update the TV app and download service separately. Vikingfile options carry your game, source and destination into the browser. Discover and game details do less background work, and completed storage operations use a compact summary.
+**More control from your TV.** Choose sources, set a default drive, pair a device and refresh the catalogue in the native app. Update the TV app and download service separately. Vikingfile and Fileditch options carry your game, source and destination into the browser. Discover and game details do less background work, and completed storage operations use a compact summary.
 
 **Payload-manager setup is opt-in.** Choose **App settings → Payload managers → Add Orbit** to let Orbit add and update a copy. Existing copies stay in place until you choose whether to allow updates. Auto-start is a separate choice, and Orbit leaves your manager's global Autoload switch unchanged.
 
 Local automated tests and desktop/phone checks cover these features. Library requires ShadowMount's compatible v1 local API; actions depend on the capabilities it exposes. Console acceptance for Library operations, full downloads, online catalogue refresh, reboot/auto-start and broader firmware support remains pending. The reported etaHEN toggle interaction is still under investigation.
 
-Downloads are single-file **FFPFSC** and **exFAT** options across **Archive.org** and **Vikingfile**. The available sources and formats depend on the game. File listings or bounded file responses were checked; full game downloads have not all been tested on console.
+Downloads are single-file **FFPFSC** and **exFAT** options across **Archive.org** and **Vikingfile**, plus **Folder** dumps on **Fileditch** that Orbit extracts and installs automatically after the download. The available sources and formats depend on the game. File listings or bounded file responses were checked; full game downloads have not all been tested on console.
 
 New games and updated links arrive through catalogue updates. You only need an Orbit app update for new features and fixes. Your queued downloads keep the files you originally chose.
 
@@ -112,8 +112,8 @@ For the browser version, the setup and everyday workflow is:
 1. **Run it once.** Run `orbit_store.elf` through your payload manager or ELF loader. Orbit starts, saves itself on the console, and adds the **Orbit Store** home-screen icon.
 2. **Choose manager setup.** Optionally open **App settings → Payload managers → Add Orbit** for Payload Manager or Homebrew Launcher. This adds a copy and lets Orbit keep it current. Auto-start is separate: use **Start automatically**, then enable the global Autoload switch yourself in Payload Manager if needed. Existing `autoload.txt` lists are supported; etaHEN setup is manual in its Toolbox.
 3. **Open the icon.** Once Orbit is running, select its home-screen icon to open the storefront.
-4. **Choose your sources.** Sources start off. Select Archive.org, Vikingfile, or both, read the notice, and acknowledge your responsibility to download only content you are legally entitled to access and use.
-5. **Download on the console.** Open a game, select its source and format under **Download options**, choose storage, and select **Download to PS5** for a direct option. For a Vikingfile browser option, select **Open download page on PS5**, complete any verification and press Download on Vikingfile, then return to Orbit and open Downloads. Orbit checks the file before adding it to the queue.
+4. **Choose your sources.** Sources start off. Select Archive.org, Vikingfile, Fileditch, or any combination, read the notice, and acknowledge your responsibility to download only content you are legally entitled to access and use.
+5. **Download on the console.** Open a game, select its source and format under **Download options**, choose storage, and select **Download to PS5** for a direct option. For a browser option, select **Open download page on PS5**, complete any verification and press Download on the provider page, then return to Orbit and open Downloads. Orbit checks the file before adding it to the queue.
 6. **Use your phone if you want.** While Orbit is running, visit `http://<ps5-ip>:34177/` on the same network and select **Pair devices**. Enter the console's six-digit code. Choose **Show code on PS5** if you missed the notification, or open **Pair devices** on the console to keep the code visible until you close it.
 
 After a reboot, run your jailbreak as usual. Open the Games-row TV app to start Orbit through your ELF loader, or start the payload manually or through auto-start you have configured. The Media-tab browser shortcut needs Orbit already running. Orbit never creates an `autoload.txt`, because a new one would stop your autoloader from opening Payload Manager. The reboot and auto-start workflow is awaiting full console validation.
@@ -193,11 +193,11 @@ In the native TV app, use the D-pad or left stick to move, Cross to select, Circ
 | Circle / Escape | Back or close details |
 | Touch / mouse | Select visible controls |
 
-The catalogue offers single-file **FFPFSC** and **exFAT** options across Archive.org and Vikingfile.
+The catalogue offers single-file **FFPFSC** and **exFAT** options across Archive.org and Vikingfile, plus extracted **Folder** options on Fileditch.
 
 Source choices are saved on the console and shared by paired devices. Turning off a source hides its download options and pauses unfinished downloads without deleting files. A game stays visible if another enabled source offers it. Re-enable a source and resume its downloads when ready. There is no user library import or custom source entry in this version.
 
-Orbit does **not** extract RAR/7z archives, directly install game packages, launch games, or download in rest mode. Library actions use ShadowMount; a confirmed scan may register or mount discovered games. “Complete” means the file was saved and passed available validation. Size-only checks are labelled separately from checksum verification.
+Orbit does **not** directly install game packages, launch games, or download in rest mode. Fileditch **Folder** downloads are extracted automatically after the download: Orbit unpacks the archive in the background, moves the game folder into `homebrew` on the selected drive and deletes the archive. Library actions use ShadowMount; a confirmed scan may register or mount discovered games. “Complete” means the file was saved and passed available validation. Size-only checks are labelled separately from checksum verification.
 
 ## When something needs attention
 

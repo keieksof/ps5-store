@@ -20,25 +20,26 @@ If a TV app update still opens the previous version, close the app first. Restar
 
 The replacement was saved for the next start. Open **App settings → Update / reinstall**, compare **Running** and **Saved for next start**, choose **Stop Orbit to restart**, then launch the saved `/data/orbit-store/orbit_store.elf` or a synced manager copy. Pairing and the queue stay saved. A manually imported old ELF starts that older copy unless you replace it.
 
-## Vikingfile does not enter Downloads
+## Vikingfile or Fileditch does not enter Downloads
 
-Use Orbit 0.5.0 or later and enable Vikingfile in Sources. Select the desired option and drive, press **Open download page on PS5**, complete any provider verification and press Download on the provider page, then return to Orbit. Verification happens on the PS5 even if you initiated it on your phone.
+Use Orbit 0.5.0 or later and enable the provider (Vikingfile or Fileditch) in Sources. Select the desired option and drive, press **Open download page on PS5**, complete any provider verification and press Download on the provider page, then return to Orbit. Verification happens on the PS5 even if you initiated it on your phone.
 
 If the session times out, the provider page changes or the browser restarts, return to Orbit and try that option again. Cancel an existing session before starting another. A file that does not match the selected option is not queued. Provider links may become unavailable.
 
 ## A download fails or is slow
 
-- **Provider returned a page:** update Orbit, restart it and retry from Downloads. For browser-only Vikingfile options, repeat the provider step. Orbit still rejects an actual error or verification page returned instead of file data.
+- **Provider returned a page:** update Orbit, restart it and retry from Downloads. For browser-only provider options, repeat the provider step. Orbit still rejects an actual error or verification page returned instead of file data.
 - **Provider throttling:** let the retry delay finish. Orbit honours the provider’s Retry-After response.
 - **Drive disconnected:** reconnect the original destination. Orbit does not silently switch to a different drive.
 - **Not enough space:** free space on the chosen destination, considering unfinished downloads, then retry.
 - **Source changed:** keep the partial until you decide whether to remove it and restart. Orbit will not append a different file to it.
+- **Extraction stopped:** Fileditch **Folder** downloads keep their archive when extraction fails or is interrupted. Return to Downloads and resume; Orbit deletes the archive only after a successful extraction.
 
 Two connections can help only when supported by the host and file identity. Provider speed limits, network conditions and drive performance still apply.
 
 ## A game or image is missing
 
-Check the enabled Sources and clear Browse’s filters. Then try **App settings → Game catalogue → Refresh catalogue**. Older Orbit versions retain their Archive-only catalogue; update to 0.5.0 for Vikingfile options.
+Check the enabled Sources and clear Browse’s filters. Then try **App settings → Game catalogue → Refresh catalogue**. Older Orbit versions retain their Archive-only catalogue; update to 0.5.0 for Vikingfile options and to the latest build for Fileditch options.
 
 Artwork comes from external URLs. Orbit tries an available fallback when the primary fails. Network/DNS restrictions or unavailable host images can still prevent artwork from loading. Some dates and other metadata remain missing; corrections arrive through catalogue updates. Undated games appear after dated games in release-date sorting.
 

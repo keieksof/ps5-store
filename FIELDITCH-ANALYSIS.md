@@ -6,8 +6,10 @@ automatic background flow **download → verify → extract → install → dele
 through dlpsgame.com. Verified against the source bundle, the published catalogue and the build
 outputs.
 
-**Result:** catalogue revision 14 (602 games, 687 options, 22 fileditch releases), console and
-host binaries build clean, all syntax/type/format/catalogue checks green.
+**Result:** catalogue revision 15 (636 games, 724 options, 59 fileditch releases — 32 multi-volume
+`.partN.rar` sets and 27 singles), console and host binaries build clean, all
+syntax/type/format/catalogue checks green. Phase 1 shipped the single-volume `.rar` flow at
+revision 14; phase 2 (§11) adds multipart sets, 7z/zip extraction and catalogue passwords.
 
 ---
 
@@ -16,9 +18,10 @@ host binaries build clean, all syntax/type/format/catalogue checks green.
 - dlpsgame.com publishes one post per game, naming the PlayStation title id
   (`PPSAxxxxx`) and mirroring the archive as a plain `[DLPSGAME.COM]-<title id>` file on
   fileditch.
-- Crawl (`fd-crawl-results.json`): 83 posts → 59 with fileditch links → **22 posts whose only
-  live file is one single-volume `.rar`**. Excluded: 36 multi-volume posts (`.partN.rar`),
-  1 post with a `.7z` mirror, dead links (none — fileditch files were all alive at crawl time).
+- Crawl (`fd-crawl-results.json`): 83 posts → 59 with fileditch links → phase 1 kept **22 posts
+  whose only live file is one single-volume `.rar`** and excluded the 36 multi-volume posts
+  (`.partN.rar`) and the 1 post with a `.7z` mirror; dead links (none — fileditch files were all
+  alive at crawl time). Phase 2 admits all 59 posts (§11).
 - Every candidate was probed live through the fileditch **Status API**
   (`https://fileditchfiles.st/api/<user>/<hash>/<file>` → `{"status":true,"size":…}`), which
   provides both the existence proof and the exact byte size used for progress and verification.
@@ -204,8 +207,9 @@ been announced as "Press Download on Vikingfile". Fixed everywhere:
 - **Artwork**: 13 of the 22 new games have no Prosperopatches title page — they keep the
   dlpsgame post image (~300 px) as cover, `ambient` layout. Post `og:description` is boilerplate
   (`"<title> PS5"`), so descriptions stay null.
-- **Phase-1 scope**: single-volume `.rar` only. `.partN.rar` splits and `.7z` mirrors are
-  excluded by the generator (the WALL-E post is the only `.7z` case seen).
+- ~~**Phase-1 scope**: single-volume `.rar` only. `.partN.rar` splits and `.7z` mirrors are
+  excluded by the generator (the WALL-E post is the only `.7z` case seen).~~ Superseded by
+  phase 2 (§11): all 59 posts now contribute — sets, `.7z` and `.zip` included.
 - **No sha256**: fileditch publishes none; verification is Status-API size equality plus the
   browser-capture validation before the transfer starts.
 - **URL shape changes**: all gates fail closed — if fileditch changes its page/CDN shape, the
@@ -225,3 +229,146 @@ docker run --rm -v "$PWD:/work" orbit-build:0.1 payload host # binaries
 The complete source delta is saved as `fileditch-extraction.patch` in this repository
 (vendored `third_party/unrar/` and regenerated `catalog/*` inputs are excluded; the catalogue
 inputs ship through the published feeds and the generator above).
+
+---
+
+## 11. Phase 2 — multipart volume sets, 7z/zip, catalogue passwords
+
+Phase 2 (requested after phase 1 shipped) lifts the single-volume restriction: dlpsgame also
+publishes `.partN.rar` volume sets and `.7z`/`.zip` mirrors, and the catalogue gains an explicit
+archive `password` field. Catalogue revision 15: **636 games, 724 options, 59 fileditch
+releases** — 32 volume sets (2–10 volumes) and 27 singles, so all 59 dlpsgame posts now
+contribute exactly one release each (previously 22).
+
+### 11.1 Catalogue schema
+
+```jsonc
+{
+  "sizeBytes": 21260088114,          // TOTAL across every volume
+  "filename": "[DLPSGAME.COM]-PPSA06488.part1.rar",
+  "url": "<volume-1 page>",          // top-level url/filename are always volume 1
+  "password": "DLPSGAME.COM",        // <= 63 chars; empty/absent -> the unrar default
+  "parts": [                         // extra volumes only (absent for single-file dumps)
+    { "url": "…", "browserUrl": "…", "filename": "…part2.rar", "sizeBytes": 10630044057 }
+  ]
+}
+```
+
+- Evidence gate: `verification.sizeBytes == sizeBytes − sum(parts[].sizeBytes)` — the Status API
+  proves volume 1, and the arithmetic binds every extra volume's declared size to it.
+- `parts` exist only for `sourceId: fileditch` + `format: "Folder"`; the set must start at
+  `.part1.rar` and continue contiguously with the same base name and digit padding as volume 1,
+  at most 60 volumes (`FILEDITCH_MAX_PARTS` == `ORBIT_MAX_PARTS`), and every URL in the
+  catalogue must be unique.
+- Name gate widened in `catalog.py` and shared with the generator: `FILEDITCH_NAME` accepts the
+  `[DLPSGAME.COM]-` and `[DLPSGAME.COM]_` separators (the underscore variant is real — Poppy
+  Playtime, Silent Hill) plus the bare `PPSAxxxxx…` prefix (WALL-E's prefix-less `.7z`);
+  `FILEDITCH_PART` parses `.partN.rar`. Suffix allowlist: `.rar .7z .zip .tar .tar.gz .tgz`.
+  `fileditch_mirror_name(filename, tid)` must match exactly one title id.
+
+### 11.2 Generator: one dump per post
+
+`fd_catalog.py`'s `candidates()` groups a post's declared `fileditch` URL list (field order) by
+`.partN.rar` base+padding and `dump_choice()` picks, in declared order: the **first complete
+volume set** (≥2 members, contiguous from part 1, every declared member alive — a dead member
+invalidates its whole set), else the **first single archive** passing the name gate. Sets win
+over singles because the multi-volume mirror is the fuller dump. Duplicate title ids across posts
+are dropped (`title id taken`), and a post whose declared `titleId` disagrees with its filenames
+aborts the run.
+
+Every chosen volume is then proven through its own fileditch page Status API (1.2 s apart) —
+metadata sizes are authoritative, a moved size only warns — and one release per dump is emitted
+with `parts`, `password` and volume-1 evidence (`fileditch_metadata_evidence`). All-or-nothing:
+one failing kept post aborts before any write. Result of the full 59-post crawl: 37 new releases
++ 34 new games (32 sets + 5 singles; 22 earlier singles were already listed).
+
+### 11.3 Ownership and state
+
+- `Release.parts` is heap-owned by the catalogue; `catalog.c` frees the outgoing rows' parts
+  before `apply()`. Jobs deep-copy parts at create time; state snapshots parse their own copies.
+- `job_action` remove / history-clear move the parts into a `doomed` list that is freed only
+  after the state file saves successfully, so a failed save can never leave a dangling pointer.
+
+### 11.4 Download, capture, extraction
+
+- `run_job` orchestrates volumes; per-volume `run_volume` downloads and validates. Multipart
+  volumes are written straight to their **final** names (single-file jobs keep the `.part`
+  scratch name), so a resume can enumerate completed volumes on disk; an identity/cursor block
+  refuses progress writes when `j->part_index != k`, volumes below the cursor fast-skip, and
+  multipart errors are prefixed `Part k of N: `. `job.total` is the whole-set `sizeBytes`, so
+  progress spans every volume (`received` = base + current span).
+- Extract runs only when every volume is present; on `ORBIT_EXTRACT_OK` all volumes are unlinked
+  (the set is consumed together), otherwise the current partial is renamed to final so nothing
+  re-downloads.
+- Browser capture grabs every volume's page URL up front (one session, N pages, capturing
+  url/etag/modified each) before a single `job_create_captured_locked`; `selected_locked`
+  matches candidates by browser_url/filename/size. A signed route expiring across a long parts
+  loop is recovered by the normal re-verify path.
+- `extract.c` dispatch: `.rar` → vendored UnRAR with `job->release.password` (falling back to
+  `DLPSGAME.COM` via `UCM_NEEDPASSWORD`); everything else → **libarchive**
+  (`archive_read_add_passphrase`), covering 7z/zip/tar including AES-encrypted members.
+  Extraction itself stages in `<root>/.orbit-staging-<jobid>`, BFS-locates `sce_sys/` +
+  `eboot.bin`, renames into place, then hands off to the DRM patch — unchanged from phase 1.
+
+### 11.5 Build: zlib + xz + libarchive
+
+- `tools/build-deps.sh` fetches zlib 1.3.2, xz 5.8.1 and libarchive 3.8.5 with pinned sha256 and
+  builds them for the PS5 (`--host=x86_64-pc-freebsd`, static, installed into the SDK prefix).
+  libarchive is configured `--with-zlib --with-lzma --with-openssl` — 7z/zip AES needs a crypto
+  backend and OpenSSL is already built in the same prefix — with every optional format/library
+  disabled (`bz2, libb2, lz4, zstd, lzo2, cng, mbedtls, nettle, xml2, expat, xattr, acl`) and
+  its own tools off (`bsdtar, bsdcat, bsdcpio, bsdunzip`).
+- The xz build disables **all** of its CLI tools (`--disable-xz --disable-xzdec
+  --disable-lzmadec --disable-lzmainfo`): PS5 clang's FreeBSD triple makes configure's link test
+  for `cap_rights_limit` succeed, so the tools' Capsicum sandbox includes `<sys/capsicum.h>` —
+  which the PS5 sysroot does not ship. Only liblzma (capsicum-free) is needed.
+- `Makefile` links `-larchive -llzma -lz` on the payload (after `-lssl -lcrypto`) and on the
+  host/test/benchmark targets; `Dockerfile` adds `libarchive-dev` for the Linux host target.
+- Licences: `licenses/zlib.txt`, `licenses/GPL-2.0.txt` (liblzma is GPL-2.0-or-later — compatible
+  with Orbit's GPL-3.0-or-later), `licenses/libarchive-BSD-2-Clause.txt`, three payload rows in
+  `THIRD-PARTY-NOTICES.md`, inventory lines in `SOURCE-BUNDLE.md`, and `tools/release-sources.json`
+  entries carrying the same pinned hashes.
+
+### 11.6 Feed and interfaces
+
+- `api.c` strips `password` and `parts` from the public catalogue feed (the archive password
+  never leaves the console) and derives `partCount` (= parts size + 1) for the UIs. Full release
+  JSON only exists in private/state job payloads.
+- Job JSON gains `partCount` + `partIndex` (0-based).
+- Web: `types.ts` (`Release.partCount`, `Job.partCount|partIndex`, `format` union gains
+  `"Folder"`); `Details.tsx` shows an `N parts` badge with a matching aria-label; `Downloads.tsx`
+  renders `Part k of N · ` in the meta line while status ∈ queued/downloading/paused/retrying —
+  completed/error rows carry no label (the backend error string already has the `Part k of N:`
+  prefix).
+- TV: `model.hpp` (`part_count`, `Job.part_index`) + `model.cpp` parsing; `game_page.cpp` option
+  detail `· N parts` and an `Archive volumes` fact row; `downloads.cpp` the same `Part k of N`
+  meta line for active statuses.
+
+### 11.7 Phase-2 validation
+
+- `catalog.py verify --only <all 59 fileditch ids>` green (filename gate + Status API + evidence
+  per release), then `build` + `check`: **636 games / 724 options**; `publish_catalog.py
+  --public-repo` → **revision 15** for both public feeds; `embed.py` → `catalog.h` at revision 15
+  (embedded JSON contains the multipart rows).
+- `check-syntax.sh`: 0/0/0 (DESKTOP, TEST, `extract_unrar.cpp`). `tsc -b`: exit 0. Prettier:
+  every changed file clean.
+- Docker image rebuilt from the changed `Dockerfile`/`build-deps.sh` (zlib, xz, libarchive built
+  for the PS5 toolchain), then `payload host`: `orbit_store.elf`, `orbit_runtime.elf` and
+  `orbit-host` all link clean with the new libraries under `-Wall -Wextra -Werror`.
+- TV tests (g++ + ASan/UBSan, host webp headers staged from Ubuntu debs): **74 tests, 73 pass** —
+  identical to the phase-1 baseline; the single failure is the pre-existing
+  `Art.MarksFailuresAndEvictsTheLeastRecentlyDrawn` artwork-test divergence (the environment has
+  no `clang++`, so g++ stands in with `-Wno-format-truncation` for its one extra warning class).
+
+### 11.8 Phase-2 limitations
+
+- **Tail-volume completeness**: the crawl records only live files, so a *last* volume that died
+  without leaving a gap cannot be distinguished from a complete set. A dead member that leaves a
+  gap does invalidate the set; fileditch listed every declared URL alive in this crawl, and a
+  set's total tracks its companion `.7z` twin within ~7% (compression variance) as a sanity
+  signal — not a gate.
+- **Signed-route expiry**: a long parts loop can outlive signed CDN routes on early volumes;
+  downloads re-verify the route when that happens (accepted trade-off for the simple
+  capture-all-upfront model).
+- **Hardware test** still pending for the console browser flow and for a real multipart
+  extraction on device (as in §9).

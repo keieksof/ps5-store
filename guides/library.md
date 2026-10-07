@@ -2,13 +2,13 @@
 
 Library is available in both the native TV app and browser version. Both read the same ShadowMount inventory and share storage operations.
 
-![Native TV app Library with installed and on-drive games](../assets/0.7.0/native-library.png)
+![Native TV app Library with installed and on-drive games](../assets/0.8.0/native-library.png)
 
 Library shows installed games and sources available on your drives, using the inventory from a compatible **ShadowMount v1 local API** on the same PS5. It works independently of your download-source choices. Orbit does not start ShadowMount or change its configuration.
 
-![Library with installed, mounted and on-drive status](../assets/0.7.0/desktop-library.jpg)
+![Library with installed and on-drive status](../assets/0.8.0/desktop-library.jpg)
 
-*Status labels distinguish what is installed from what is present on a drive. Screenshots show the release interface with sample Library and storage data.*
+*Status labels distinguish what is installed from what is present on a drive. Previews show the 0.8.0 interface rendered locally with sample Library and storage data.*
 
 ## Understand the labels
 
@@ -35,7 +35,7 @@ Open **Storage** to inspect drive capacity and request game sizes. Provider capa
 
 Orbit does not launch games or uninstall them. Downloads and Library actions are separate; a completed download is a saved file, not a promise that it is installed or ready to launch.
 
-![Phone Library with status and filtering controls](../assets/0.7.0/phone-library.jpg)
+![Phone Library with status and filtering controls](../assets/0.8.0/phone-library.jpg)
 
 *Pair a phone to inspect the same console inventory without changing download-source settings.*
 

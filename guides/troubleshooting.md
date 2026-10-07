@@ -14,6 +14,8 @@ If the app says Orbit is not running, start your ELF loader on **port 9021** and
 
 For missing artwork in the TV app, check the running service version in the browser's **App settings → Update / reinstall**. Use **0.6.0 or later**; older services do not provide its artwork endpoint. Stop Orbit and start the new saved or bundled service. Installing the new FFPKG alone does not replace a service already running.
 
+If ShadowMount reports **TitleDir bridge unavailable**, its app-registration bridge is not ready. Close active games, restart the console when convenient, run your usual jailbreak and ShadowMount setup, then retry registration of the existing FFPKG. If it persists, include ShadowMount's version and the relevant registration errors from its debug log in your report.
+
 If a TV app update still opens the previous version, close the app first. Restart the console and jailbreak when convenient so ShadowMountPlus can remount the replacement. The TV app and service have separate versions.
 
 ## An update says Orbit is already running
@@ -35,11 +37,11 @@ If the session times out, the provider page changes or the browser restarts, ret
 - **Source changed:** keep the partial until you decide whether to remove it and restart. Orbit will not append a different file to it.
 - **Extraction stopped:** Fileditch **Folder** downloads keep their archive when extraction fails or is interrupted. Return to Downloads and resume; Orbit deletes the archive only after a successful extraction.
 
-Two connections can help only when supported by the host and file identity. Provider speed limits, network conditions and drive performance still apply.
+Parallel connections can help only when supported by the host and file identity. Provider speed limits, network conditions and drive performance still apply.
 
 ## A game or image is missing
 
-Check the enabled Sources and clear Browse’s filters. Then try **App settings → Game catalogue → Refresh catalogue**. Older Orbit versions retain their Archive-only catalogue; update to 0.5.0 for Vikingfile options and to the latest build for Fileditch options.
+Check the enabled Sources and clear Browse’s filters. Then try **App settings → Game catalogue → Refresh catalogue**. Use Orbit 0.8.0 for the current catalogue feed. Older versions keep their bundled or saved catalogue but need an app update to receive new games; Fileditch options need a Fileditch-enabled build.
 
 Artwork comes from external URLs. Orbit tries an available fallback when the primary fails. Network/DNS restrictions or unavailable host images can still prevent artwork from loading. Some dates and other metadata remain missing; corrections arrive through catalogue updates. Undated games appear after dated games in release-date sorting.
 
@@ -47,9 +49,9 @@ Artwork comes from external URLs. Orbit tries an available fallback when the pri
 
 Open **App settings → Diagnostics → View diagnostics**, then **Copy diagnostic report**. If automatic copying is unavailable, Orbit shows selectable report text. Reports omit pairing codes, access tokens, download links, game names and paths. Nothing is sent automatically.
 
-![App settings with local diagnostics](../assets/0.7.0/desktop-settings.jpg)
+![App settings with local diagnostics](../assets/0.8.0/desktop-diagnostics.jpg)
 
-*You choose whether to copy and share a report. The screenshot shows the release UI with sample console responses.*
+*You choose whether to copy and share a report. The screenshot shows the local 0.8.0 interface preview with sample console responses.*
 
 When reporting a problem in [Issues](https://github.com/saawant12/orbit-store-ps5/issues), include the Orbit version, PS5 firmware, loader, the steps taken and the displayed error. Remove any private details before posting. The reported etaHEN payload-toggle interaction remains under investigation.
 
